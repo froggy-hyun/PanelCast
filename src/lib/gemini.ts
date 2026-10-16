@@ -251,10 +251,184 @@ export async function analyzeTileWithGemini(params: {
   };
 }
 
-let liveTtsWindowStartMs = Date.now();
-let liveTtsCountInWindow = 0;
+import { execSync } from 'node:child_process';
+import { GoogleAuth } from 'google-auth-library';
 
-// Gemini 다중 보이스 TTS 합성 (단일 화자 호출을 캐릭터별로 반복하여 2인 제한 없이 N인 연기 지원)
+let liveTtsCallIndex = 0;
+const modelCooldownUntilMs = new Map<string, number>();
+let cachedCloudAccessToken: { token: string; expiresAtMs: number } | null = null;
+const cloudAuth = new GoogleAuth({
+  scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+});
+
+// 대사 본문에서 혹시라도 섞여 들어간 연기 지시문 래퍼를 완전히 제거하여 순수 대사만 추출
+export function stripActingDirectionsFromSpokenText(raw: string): string {
+  let text = raw.trim();
+  text = text.replace(
+    /^\[(?:연기\s*지시|Acting\s*Direction)[^\]]*\]\s*(?:다음\s*대사를[^:]*:\s*|Perform\s*only\s*the\s*spoken\s*line[^:]*:\s*)?/i,
+    '',
+  );
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith('“') && text.endsWith('”'))
+  ) {
+    text = text.slice(1, -1).trim();
+  }
+  return text.trim();
+}
+
+async function getCloudTtsAccessToken(): Promise<string | null> {
+  const now = Date.now();
+  if (cachedCloudAccessToken && cachedCloudAccessToken.expiresAtMs > now + 30_000) {
+    return cachedCloudAccessToken.token;
+  }
+
+  try {
+    const client = await cloudAuth.getClient();
+    const tokenRes = await client.getAccessToken();
+    if (tokenRes?.token) {
+      cachedCloudAccessToken = {
+        token: tokenRes.token,
+        expiresAtMs: now + 45 * 60_000,
+      };
+      return tokenRes.token;
+    }
+  } catch {
+    // 로컬 개발 환경에서는 gcloud CLI 토큰 폴백 시도
+  }
+
+  try {
+    const cliToken = execSync('gcloud auth print-access-token', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 4000,
+    }).trim();
+    if (cliToken) {
+      cachedCloudAccessToken = {
+        token: cliToken,
+        expiresAtMs: now + 30 * 60_000,
+      };
+      return cliToken;
+    }
+  } catch {
+    // 인증 토큰 없음
+  }
+
+  return null;
+}
+
+const NEURAL2_VOICE_MAP: Record<
+  string,
+  {
+    ko: { name: string; pitch: number; rate: number };
+    en: { name: string; pitch: number; rate: number };
+  }
+> = {
+  Kore: {
+    ko: { name: 'ko-KR-Neural2-A', pitch: -0.6, rate: 1.0 },
+    en: { name: 'en-US-Neural2-C', pitch: 0.0, rate: 1.0 },
+  },
+  Puck: {
+    ko: { name: 'ko-KR-Neural2-C', pitch: 1.2, rate: 1.04 },
+    en: { name: 'en-US-Neural2-D', pitch: 1.0, rate: 1.04 },
+  },
+  Charon: {
+    ko: { name: 'ko-KR-Neural2-C', pitch: -4.0, rate: 0.94 },
+    en: { name: 'en-US-Neural2-J', pitch: -3.5, rate: 0.94 },
+  },
+  Zephyr: {
+    ko: { name: 'ko-KR-Neural2-B', pitch: 0.8, rate: 1.02 },
+    en: { name: 'en-US-Neural2-F', pitch: 0.8, rate: 1.02 },
+  },
+  Fenrir: {
+    ko: { name: 'ko-KR-Neural2-C', pitch: -1.8, rate: 1.07 },
+    en: { name: 'en-US-Neural2-I', pitch: -1.5, rate: 1.07 },
+  },
+  Aoede: {
+    ko: { name: 'ko-KR-Neural2-A', pitch: 2.0, rate: 1.05 },
+    en: { name: 'en-US-Neural2-E', pitch: 1.5, rate: 1.05 },
+  },
+  Leda: {
+    ko: { name: 'ko-KR-Neural2-B', pitch: -1.2, rate: 0.96 },
+    en: { name: 'en-US-Neural2-H', pitch: -1.0, rate: 0.96 },
+  },
+  Orus: {
+    ko: { name: 'ko-KR-Neural2-C', pitch: 0.0, rate: 1.0 },
+    en: { name: 'en-US-Neural2-A', pitch: 0.0, rate: 1.0 },
+  },
+};
+
+async function synthesizeWithCloudNeural2Tts(params: {
+  spokenText: string;
+  voiceName: string;
+  locale: LocaleCode;
+  speakingRate?: number;
+}): Promise<{
+  wavBuffer: Buffer;
+  durationMs: number;
+  sampleRateHz: number;
+  sha256: string;
+  modelId: string;
+} | null> {
+  const token = await getCloudTtsAccessToken();
+  if (!token) return null;
+
+  const profile = NEURAL2_VOICE_MAP[params.voiceName] ?? NEURAL2_VOICE_MAP.Kore;
+  const target = params.locale === 'ko' ? profile.ko : profile.en;
+  const languageCode = params.locale === 'ko' ? 'ko-KR' : 'en-US';
+  const rate = Math.max(
+    0.75,
+    Math.min(1.35, Number(((params.speakingRate ?? 1.0) * target.rate).toFixed(2))),
+  );
+  const projectId = process.env.GCP_PROJECT_ID || 'h2gdm-hack26icn-2669';
+
+  try {
+    const res = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'x-goog-user-project': projectId,
+      },
+      body: JSON.stringify({
+        input: { text: params.spokenText },
+        voice: {
+          languageCode,
+          name: target.name,
+        },
+        audioConfig: {
+          audioEncoding: 'LINEAR16',
+          sampleRateHertz: 24000,
+          speakingRate: rate,
+          pitch: target.pitch,
+        },
+      }),
+    });
+
+    if (!res.ok) return null;
+    const data = (await res.json()) as { audioContent?: string };
+    if (!data.audioContent) return null;
+
+    const rawBuf = Buffer.from(data.audioContent, 'base64');
+    const wavBuffer = ensureValidWavBuffer(rawBuf, 'audio/wav');
+    const inspected = inspectWavBuffer(wavBuffer);
+    if (!inspected.isValidWav || inspected.durationMs <= 0) {
+      return null;
+    }
+    const sha256 = crypto.createHash('sha256').update(wavBuffer).digest('hex');
+    return {
+      wavBuffer,
+      durationMs: inspected.durationMs,
+      sampleRateHz: inspected.sampleRateHz,
+      sha256,
+      modelId: `cloud-tts-${target.name}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Gemini 다중 보이스 TTS 합성 (연기 지시문은 절대 텍스트에 포함하지 않고 순수 대사만 전달)
 export async function synthesizeSegmentTtsWithGemini(params: {
   text: string;
   stylePrompt: string;
@@ -269,79 +443,91 @@ export async function synthesizeSegmentTtsWithGemini(params: {
   modelId: string;
 }> {
   const ai = getGenAiClient();
-  const cleanText = params.text.trim();
+  const spokenText = stripActingDirectionsFromSpokenText(params.text);
 
-  const now = Date.now();
-  if (now - liveTtsWindowStartMs > 60_000) {
-    liveTtsWindowStartMs = now;
-    liveTtsCountInWindow = 0;
-  }
-
-  const maxLiveTtsPerMinute = Number(process.env.MAX_LIVE_TTS_CALLS_PER_MINUTE || 16);
-  if (
-    !ai ||
-    process.env.PANELCAST_SYNTH_FALLBACK_ONLY === 'true' ||
-    liveTtsCountInWindow >= maxLiveTtsPerMinute
-  ) {
-    const fb = generateDeterministicSpeechWav(cleanText, params.voiceName);
+  if (process.env.PANELCAST_SYNTH_FALLBACK_ONLY === 'true') {
+    const fb = generateDeterministicSpeechWav(spokenText, params.voiceName);
     return { ...fb, modelId: 'deterministic-wav-synth' };
   }
 
-  liveTtsCountInWindow += 1;
+  const preferGeminiLive =
+    ai && process.env.PANELCAST_PREFER_CLOUD_NEURAL2_TTS !== 'true';
 
-  const modelsToTry = [DEFAULT_TTS_MODEL, FALLBACK_TTS_MODEL];
-  const promptText =
-    params.locale === 'ko'
-      ? `[연기 지시: ${params.stylePrompt}] 다음 대사를 지시문은 읽지 말고 대사 본문만 자연스럽게 연기하여 낭독하세요: "${cleanText}"`
-      : `[Acting Direction: ${params.stylePrompt}] Perform only the spoken line below naturally: "${cleanText}"`;
+  if (preferGeminiLive) {
+    const callIdx = liveTtsCallIndex++;
+    const modelsToTry =
+      callIdx % 2 === 0
+        ? [DEFAULT_TTS_MODEL, FALLBACK_TTS_MODEL]
+        : [FALLBACK_TTS_MODEL, DEFAULT_TTS_MODEL];
 
-  for (const modelId of modelsToTry) {
-    try {
-      const response = await Promise.race([
-        ai.models.generateContent({
-          model: modelId,
-          contents: [{ role: 'user', parts: [{ text: promptText }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: params.voiceName || 'Kore',
+    for (const modelId of modelsToTry) {
+      const cooldownUntil = modelCooldownUntilMs.get(modelId) ?? 0;
+      if (Date.now() < cooldownUntil) {
+        continue;
+      }
+      try {
+        const response = await Promise.race([
+          ai.models.generateContent({
+            model: modelId,
+            // 중요: TTS 모델은 contents의 문자열을 그대로 낭독하므로 오직 순수 대사/해설 본문만 전달
+            contents: [{ role: 'user', parts: [{ text: spokenText }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: params.voiceName || 'Kore',
+                  },
                 },
               },
             },
-          },
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('TTS request timeout')), 9000),
-        ),
-      ]);
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('TTS request timeout')), 8500),
+          ),
+        ]);
 
-      const parts = response.candidates?.[0]?.content?.parts ?? [];
-      const audioPart = parts.find((p) => p.inlineData?.data);
+        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        const audioPart = parts.find((p) => p.inlineData?.data);
 
-      if (audioPart?.inlineData?.data) {
-        const rawBuf = Buffer.from(audioPart.inlineData.data, 'base64');
-        const mimeType = audioPart.inlineData.mimeType || 'audio/L16;rate=24000';
-        const wavBuffer = ensureValidWavBuffer(rawBuf, mimeType);
-        const inspected = inspectWavBuffer(wavBuffer);
-        const sha256 = crypto.createHash('sha256').update(wavBuffer).digest('hex');
+        if (audioPart?.inlineData?.data) {
+          const rawBuf = Buffer.from(audioPart.inlineData.data, 'base64');
+          const mimeType = audioPart.inlineData.mimeType || 'audio/L16;rate=24000';
+          const wavBuffer = ensureValidWavBuffer(rawBuf, mimeType);
+          const inspected = inspectWavBuffer(wavBuffer);
+          const sha256 = crypto.createHash('sha256').update(wavBuffer).digest('hex');
 
-        if (inspected.isValidWav && inspected.durationMs > 0) {
-          return {
-            wavBuffer,
-            durationMs: inspected.durationMs,
-            sampleRateHz: inspected.sampleRateHz,
-            sha256,
-            modelId,
-          };
+          if (inspected.isValidWav && inspected.durationMs > 0) {
+            return {
+              wavBuffer,
+              durationMs: inspected.durationMs,
+              sampleRateHz: inspected.sampleRateHz,
+              sha256,
+              modelId,
+            };
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+          modelCooldownUntilMs.set(modelId, Date.now() + 45_000);
         }
       }
-    } catch {
-      // 다음 폴백 TTS 모델 시도
     }
   }
 
-  const fb = generateDeterministicSpeechWav(cleanText, params.voiceName);
+  // Gemini TTS 쿼터 초과 시 Google Cloud Neural2 다중 캐릭터 음성으로 자연스럽게 합성
+  const neuralResult = await synthesizeWithCloudNeural2Tts({
+    spokenText,
+    voiceName: params.voiceName || 'Kore',
+    locale: params.locale,
+    speakingRate: params.speakingRate,
+  });
+  if (neuralResult) {
+    return neuralResult;
+  }
+
+  const fb = generateDeterministicSpeechWav(spokenText, params.voiceName);
   return { ...fb, modelId: 'deterministic-wav-fallback' };
 }
+

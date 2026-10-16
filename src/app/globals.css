@@ -1,18 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --bg-paper: #f7f5ef;
+  --bg-paper: #f6f4ee;
   --bg-card: #ffffff;
-  --bg-subtle: #eeeae0;
+  --bg-subtle: #ebe6dc;
   --ink-primary: #141413;
-  --ink-secondary: #4a4843;
-  --ink-muted: #68655e;
-  --border-hairline: #dcd6c8;
+  --ink-secondary: #3b3934;
+  --ink-muted: #545049;
+  --border-hairline: #d8d2c5;
   --border-strong: #141413;
-  --accent-vermilion: #b83a22;
-  --accent-vermilion-hover: #962c17;
-  --accent-pine: #1e4d3b;
-  --focus-ring: #b83a22;
+  --accent-vermilion: #a6321b;
+  --accent-vermilion-hover: #892612;
+  --accent-pine: #184a38;
+  --focus-ring: #a6321b;
+  --shadow-card: 0 1px 2px rgba(20, 20, 19, 0.04), 0 8px 24px -4px rgba(20, 20, 19, 0.05);
 }
 
 [data-contrast="high"] {
@@ -20,14 +21,15 @@
   --bg-card: #161616;
   --bg-subtle: #242424;
   --ink-primary: #ffffff;
-  --ink-secondary: #e5e5e5;
-  --ink-muted: #bdbdbd;
-  --border-hairline: #4a4a4a;
+  --ink-secondary: #e8e8e8;
+  --ink-muted: #c7c7c7;
+  --border-hairline: #4f4f4f;
   --border-strong: #ffffff;
-  --accent-vermilion: #ff7a59;
-  --accent-vermilion-hover: #ff987d;
+  --accent-vermilion: #ff8566;
+  --accent-vermilion-hover: #ff9e85;
   --accent-pine: #6ee7b7;
   --focus-ring: #ffdd00;
+  --shadow-card: none;
 }
 
 * {
@@ -42,8 +44,33 @@ body {
   color: var(--ink-primary);
   font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
     "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
-  line-height: 1.6;
+  line-height: 1.65;
+  letter-spacing: -0.015em;
+  word-break: keep-all;
   -webkit-font-smoothing: antialiased;
+}
+
+.font-editorial {
+  font-family: "Noto Serif KR", "Pretendard Variable", Pretendard, Georgia, serif;
+  letter-spacing: -0.025em;
+}
+
+.brand-logo {
+  height: 28px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+  transition: filter 0.15s ease;
+}
+
+[data-contrast="high"] .brand-logo {
+  filter: brightness(0) invert(1);
+}
+
+.editorial-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  box-shadow: var(--shadow-card);
 }
 
 .skip-link {
@@ -55,7 +82,7 @@ body {
   color: var(--bg-paper);
   padding: 12px 20px;
   font-weight: 700;
-  border-radius: 4px;
+  border-radius: 6px;
   text-decoration: none;
   border: 2px solid var(--focus-ring);
 }

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 500" width="1400" height="500">
+    
+    
+    <defs>
+      <clipPath id="wm-light-tr-clip-panel">
+        <rect x="-412.00" y="-160" width="440.00" height="320" />
+      </clipPath>
+      <clipPath id="wm-light-tr-clip-cast">
+        <rect x="33.00" y="-160" width="381.00" height="320" />
+      </clipPath>
+    </defs>
+
+    <g transform="translate(700.00, 250.00) scale(1.2200)">
+      <!-- "Panel" (or "P" when expand=0) -->
+      <g clip-path="url(#wm-light-tr-clip-panel)">
+        <text
+          x="-419.00"
+          y="63"
+          font-family="'Pretendard ExtraBold', 'Pretendard', -apple-system, sans-serif"
+          font-weight="800"
+          font-size="180"
+          letter-spacing="-5"
+          fill="#141413"
+        >Panel</text>
+        
+      </g>
+
+      <!-- "Cast" (or "C" when expand=0) -->
+      <g clip-path="url(#wm-light-tr-clip-cast)">
+        <text
+          x="27.00"
+          y="63"
+          font-family="'Pretendard ExtraBold', 'Pretendard', -apple-system, sans-serif"
+          font-weight="800"
+          font-size="180"
+          letter-spacing="-5"
+          fill="#B83A22"
+        >Cast</text>
+      </g>
+    </g>
+  
+  </svg>

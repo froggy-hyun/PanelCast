@@ -37,6 +37,7 @@ export function computeSegmentAudioInputHash(params: {
   const pitch = character?.voiceProfile.pitchSemitones ?? 0;
 
   const payload = JSON.stringify({
+    promptVersion: 'v2_clean_spoken_only',
     locale,
     kind: segment.kind,
     speakerId: segment.speakerCharacterId || 'narrator',
@@ -153,6 +154,7 @@ export function buildPlaybackManifestForLocale(params: {
       orderIndex: panel.orderIndex,
       sourceImageId: panel.sourceImageId,
       imageUrl: `/api/assets/${revision.episodeId}/${revision.revisionId}/source/${panel.sourceImageId}`,
+      highContrastImageUrl: `/api/assets/${revision.episodeId}/${revision.revisionId}/source/${panel.sourceImageId}?contrast=high`,
       globalYStart: panel.globalYStart,
       globalYEnd: panel.globalYEnd,
       bbox: panel.bbox,

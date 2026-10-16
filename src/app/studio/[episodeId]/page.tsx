@@ -33,8 +33,6 @@ export default function StudioCustomizationPage() {
   const [prebuiltVoices, setPrebuiltVoices] = useState<PrebuiltVoiceOption[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [authNeeded, setAuthNeeded] = useState(false);
-  const [tokenInput, setTokenInput] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [busyAction, setBusyAction] = useState('');
@@ -42,17 +40,14 @@ export default function StudioCustomizationPage() {
   const [selectedPanelIndex, setSelectedPanelIndex] = useState(0);
   const [mergeSourceId, setMergeSourceId] = useState('');
   const [mergeTargetId, setMergeTargetId] = useState('');
+  const [showDeletePrompt, setShowDeletePrompt] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
 
   const loadStudioState = useCallback(async () => {
     setLoading(true);
     setErrorMessage('');
     try {
       const res = await fetch(`/api/studio/episodes/${episodeId}`);
-      if (res.status === 401 || res.status === 403) {
-        setAuthNeeded(true);
-        setLoading(false);
-        return;
-      }
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(err.error || 'Failed to load studio state');
@@ -64,7 +59,6 @@ export default function StudioCustomizationPage() {
         soundLibrary: SoundAsset[];
         prebuiltVoices: PrebuiltVoiceOption[];
       };
-      setAuthNeeded(false);
       setEpisode(data.episode);
       setRevision(data.revision);
       setTasks(data.tasks ?? []);
@@ -81,19 +75,30 @@ export default function StudioCustomizationPage() {
     void loadStudioState();
   }, [loadStudioState]);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleDeleteCurrentEpisode(e: React.FormEvent) {
     e.preventDefault();
-    const res = await fetch('/api/auth/session', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: tokenInput }),
-    });
-    if (!res.ok) {
-      setErrorMessage('출판사 인증 키가 일치하지 않습니다.');
+    if (!deletePassword.trim()) {
+      setErrorMessage('원고 삭제 비밀번호를 입력해 주세요.');
       return;
     }
-    setTokenInput('');
-    await loadStudioState();
+    setBusyAction('delete');
+    setErrorMessage('');
+    try {
+      const res = await fetch(`/api/studio/episodes/${episodeId}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword.trim() }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || '원고 삭제 비밀번호가 일치하지 않습니다.');
+      }
+      router.push('/');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction('');
+    }
   }
 
   async function handleSaveCustomizations() {
@@ -354,41 +359,6 @@ export default function StudioCustomizationPage() {
     );
   }
 
-  if (authNeeded) {
-    return (
-      <main id="main-content" className="max-w-md mx-auto p-8 space-y-4">
-        <h1 className="text-2xl font-bold">출판사 스튜디오 인증 필요</h1>
-        <p className="text-sm" style={{ color: 'var(--ink-secondary)' }}>
-          접근성 커스텀 스튜디오는 인증된 작가 및 출판사만 접근할 수 있습니다.
-        </p>
-        <form onSubmit={handleLogin} className="space-y-3">
-          <label htmlFor="studio-token" className="block text-sm font-semibold">
-            인증 토큰
-          </label>
-          <input
-            id="studio-token"
-            type="password"
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            className="touch-target w-full px-3 py-2 border rounded"
-          />
-          <button
-            type="submit"
-            className="touch-target px-5 py-2.5 rounded font-semibold text-sm cursor-pointer"
-            style={{ backgroundColor: 'var(--accent-vermilion)', color: '#ffffff' }}
-          >
-            인증하기
-          </button>
-        </form>
-        {errorMessage && (
-          <p role="alert" className="text-sm font-semibold" style={{ color: 'var(--accent-vermilion)' }}>
-            {errorMessage}
-          </p>
-        )}
-      </main>
-    );
-  }
-
   if (!episode || !revision) {
     return (
       <main id="main-content" className="max-w-4xl mx-auto p-8 space-y-4">
@@ -421,20 +391,37 @@ export default function StudioCustomizationPage() {
           backgroundColor: 'var(--bg-card)',
         }}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3.5">
             <Link
               href="/"
-              className="touch-target inline-flex items-center px-3 py-1.5 border rounded text-xs font-semibold no-underline"
-              style={{ borderColor: 'var(--border-hairline)', color: 'var(--ink-primary)' }}
+              className="inline-flex items-center gap-2 no-underline py-1"
+              aria-label="PanelCast 홈으로 이동"
+            >
+              <img
+                src="/logo.png"
+                alt="PanelCast"
+                className="brand-logo"
+                width={158}
+                height={25}
+              />
+            </Link>
+            <Link
+              href="/"
+              className="touch-target inline-flex items-center px-3 py-1.5 border rounded-md text-xs font-semibold no-underline"
+              style={{
+                borderColor: 'var(--border-hairline)',
+                backgroundColor: 'var(--bg-paper)',
+                color: 'var(--ink-primary)',
+              }}
             >
               ← 서재 / 데스크
             </Link>
-            <div>
-              <h1 className="text-lg font-bold leading-snug">
+            <div className="border-l pl-3.5" style={{ borderColor: 'var(--border-hairline)' }}>
+              <h1 className="font-editorial text-lg font-bold leading-snug">
                 접근성 커스텀 스튜디오: {episode.titleKo}
               </h1>
-              <p className="text-xs tabular-nums" style={{ color: 'var(--ink-muted)' }}>
+              <p className="text-xs tabular-nums mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
                 작업 리비전: {revision.revisionId} ({revision.status}) · 공개 리비전:{' '}
                 {episode.publishedRevisionId || '미공개'} · 총 {revision.panels.length}컷 · 등장인물{' '}
                 {revision.characters.length}명
@@ -448,8 +435,8 @@ export default function StudioCustomizationPage() {
                 type="button"
                 disabled={Boolean(busyAction)}
                 onClick={handleCreateEditableDraft}
-                className="touch-target px-3.5 py-2 border rounded text-xs font-semibold cursor-pointer"
-                style={{ borderColor: 'var(--border-strong)' }}
+                className="touch-target px-3.5 py-2 border rounded-lg text-xs font-semibold cursor-pointer"
+                style={{ borderColor: 'var(--border-strong)', backgroundColor: 'var(--bg-paper)' }}
               >
                 새 편집 초안(Draft) 복제 생성
               </button>
@@ -459,7 +446,7 @@ export default function StudioCustomizationPage() {
               type="button"
               disabled={Boolean(busyAction)}
               onClick={handleSaveCustomizations}
-              className="touch-target px-4 py-2 border rounded text-xs font-semibold cursor-pointer"
+              className="touch-target px-4 py-2 border rounded-lg text-xs font-semibold cursor-pointer"
               style={{
                 borderColor: 'var(--border-strong)',
                 backgroundColor: 'var(--bg-paper)',
@@ -472,7 +459,7 @@ export default function StudioCustomizationPage() {
               type="button"
               disabled={Boolean(busyAction)}
               onClick={() => handleRunJob('synthesize')}
-              className="touch-target px-4 py-2 border rounded text-xs font-semibold cursor-pointer"
+              className="touch-target px-4 py-2 border rounded-lg text-xs font-semibold cursor-pointer"
               style={{
                 borderColor: 'var(--accent-pine)',
                 backgroundColor: 'var(--accent-pine)',
@@ -486,7 +473,7 @@ export default function StudioCustomizationPage() {
               type="button"
               disabled={Boolean(busyAction)}
               onClick={handleAtomicPublish}
-              className="touch-target px-5 py-2 rounded text-xs font-bold cursor-pointer"
+              className="touch-target px-5 py-2 rounded-lg text-xs font-bold cursor-pointer"
               style={{
                 backgroundColor: 'var(--accent-vermilion)',
                 color: '#ffffff',
@@ -499,14 +486,80 @@ export default function StudioCustomizationPage() {
               <button
                 type="button"
                 onClick={() => router.push(`/read/${episode.episodeId}`)}
-                className="touch-target px-3.5 py-2 border rounded text-xs font-semibold cursor-pointer"
-                style={{ borderColor: 'var(--border-hairline)' }}
+                className="touch-target px-3.5 py-2 border rounded-lg text-xs font-semibold cursor-pointer"
+                style={{ borderColor: 'var(--border-hairline)', backgroundColor: 'var(--bg-paper)' }}
               >
                 독자 리더 열기 →
               </button>
             )}
+
+            <button
+              type="button"
+              data-testid="studio-delete-toggle-btn"
+              onClick={() => {
+                setShowDeletePrompt((prev) => !prev);
+                setDeletePassword('');
+              }}
+              className="touch-target px-3.5 py-2 border rounded-lg text-xs font-semibold cursor-pointer"
+              style={{
+                borderColor: 'var(--border-hairline)',
+                backgroundColor: 'var(--bg-paper)',
+                color: 'var(--accent-vermilion)',
+              }}
+            >
+              원고 삭제
+            </button>
           </div>
         </div>
+
+        {showDeletePrompt && (
+          <div
+            className="border-t px-4 sm:px-6 py-3"
+            style={{
+              borderColor: 'var(--border-hairline)',
+              backgroundColor: 'var(--bg-subtle)',
+            }}
+          >
+            <form
+              onSubmit={handleDeleteCurrentEpisode}
+              className="max-w-7xl mx-auto flex flex-wrap items-center justify-end gap-2.5"
+            >
+              <label
+                htmlFor="studio-delete-password"
+                className="text-xs font-bold"
+                style={{ color: 'var(--ink-primary)' }}
+              >
+                원고 삭제 관리자 비밀번호:
+              </label>
+              <input
+                id="studio-delete-password"
+                data-testid="studio-delete-password-input"
+                type="password"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                placeholder="비밀번호 입력"
+                className="touch-target px-3 py-1.5 border rounded-md text-xs w-40"
+                style={{
+                  borderColor: 'var(--border-strong)',
+                  backgroundColor: 'var(--bg-card)',
+                  color: 'var(--ink-primary)',
+                }}
+              />
+              <button
+                type="submit"
+                disabled={busyAction === 'delete'}
+                data-testid="studio-delete-confirm-btn"
+                className="touch-target px-4 py-1.5 rounded-md text-xs font-bold cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--accent-vermilion)',
+                  color: '#ffffff',
+                }}
+              >
+                {busyAction === 'delete' ? '삭제 중...' : '영구 삭제 확인'}
+              </button>
+            </form>
+          </div>
+        )}
       </header>
 
       <main id="main-content" className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-8">

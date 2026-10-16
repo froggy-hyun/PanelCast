@@ -508,3 +508,49 @@ export async function cloneRevisionAsEditableDraft(
 
   return cloned;
 }
+
+// 등록된 에피소드 및 하위 리비전·오디오·이미지 에셋 삭제
+export async function deleteEpisode(episodeId: string): Promise<boolean> {
+  const safeId = episodeId.replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeId || safeId !== episodeId) {
+    return false;
+  }
+
+  const existing = await getEpisode(safeId);
+  if (!existing) {
+    return false;
+  }
+
+  const localMetaDir = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, 'episodes', safeId);
+  const localBlobDir = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, 'blobs', 'episodes', safeId);
+
+  await fs.rm(localMetaDir, { recursive: true, force: true }).catch(() => {});
+  await fs.rm(localBlobDir, { recursive: true, force: true }).catch(() => {});
+
+  const db = getFirestoreClient();
+  if (db) {
+    try {
+      const revSnap = await db.collection('episodes').doc(safeId).collection('revisions').get();
+      for (const doc of revSnap.docs) {
+        await doc.ref.delete();
+      }
+      await db.collection('episodes').doc(safeId).delete();
+    } catch {
+      // 로컬 삭제 완료
+    }
+  }
+
+  const gcs = getStorageClient();
+  if (gcs) {
+    try {
+      const bucket = gcs.bucket(GCS_PRIVATE_BUCKET);
+      await bucket.deleteFiles({ prefix: `metadata/episodes/${safeId}/`, force: true });
+      await bucket.deleteFiles({ prefix: `episodes/${safeId}/`, force: true });
+    } catch {
+      // 로컬 삭제 완료
+    }
+  }
+
+  return true;
+}
+

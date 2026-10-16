@@ -40,13 +40,18 @@ function readCookieValue(req: NextRequest | Request, cookieName: string): string
   return decodeURIComponent(match.slice(cookieName.length + 1));
 }
 
-// 작가/출판사 스튜디오 인증 검증 (Bearer 토큰, X-Publisher-Token 헤더, 또는 세션 쿠키 지원)
-export function verifyPublisherRequest(req: NextRequest | Request): {
+// 작가/출판사 스튜디오 인증 검증 (MVP 모드에서는 별도 토큰/로그인 없이 즉시 오픈 허용)
+export function verifyPublisherRequest(
+  req: NextRequest | Request,
+  options?: { requireToken?: boolean },
+): {
   authorized: boolean;
   status: number;
   reason?: string;
 } {
   const expected = getExpectedPublisherToken();
+  const strictMode =
+    options?.requireToken === true || process.env.REQUIRE_STUDIO_TOKEN === 'true';
 
   const authHeader = req.headers.get('authorization') || '';
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
@@ -57,10 +62,16 @@ export function verifyPublisherRequest(req: NextRequest | Request): {
 
   const candidate = bearerToken || headerToken || cookieToken;
   if (!candidate) {
+    if (strictMode) {
+      return {
+        authorized: false,
+        status: 401,
+        reason: 'Missing publisher authentication token.',
+      };
+    }
     return {
-      authorized: false,
-      status: 401,
-      reason: 'Missing publisher authentication token.',
+      authorized: true,
+      status: 200,
     };
   }
 

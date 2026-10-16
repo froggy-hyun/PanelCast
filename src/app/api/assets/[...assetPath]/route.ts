@@ -6,6 +6,7 @@ import {
 } from '@/lib/sound-library';
 import { getEpisode, getRevision, readBinaryAsset } from '@/lib/store';
 import { verifyPublisherRequest } from '@/lib/auth';
+import { generateHighContrastWebtoonImage } from '@/lib/pipeline';
 
 function buildRangeResponse(
   req: NextRequest,
@@ -118,9 +119,37 @@ export async function GET(
     }
 
     if (kind === 'source') {
-      const srcImage = revision.sourceImages.find((s) => s.sourceImageId === cleanId);
+      const requestedHighContrast =
+        req.nextUrl.searchParams.get('contrast') === 'high' || cleanId.endsWith('_hc');
+      const normalizedSourceId = cleanId.replace(/_hc$/i, '');
+      const srcImage = revision.sourceImages.find(
+        (s) => s.sourceImageId === normalizedSourceId,
+      );
       if (!srcImage) {
         return NextResponse.json({ error: 'Source image not found' }, { status: 404 });
+      }
+      if (requestedHighContrast) {
+        if (srcImage.highContrastStorageUri) {
+          try {
+            const hcBuf = await readBinaryAsset(srcImage.highContrastStorageUri);
+            return buildRangeResponse(
+              req,
+              hcBuf,
+              srcImage.mimeType,
+              isPublishedRevision ? 'public, max-age=3600' : 'private, no-store',
+            );
+          } catch {
+            // 저장된 고대비 파일이 없는 경우 원본에서 즉시 변환
+          }
+        }
+        const origBuf = await readBinaryAsset(srcImage.storageUri);
+        const hcBuf = await generateHighContrastWebtoonImage(origBuf, srcImage.mimeType);
+        return buildRangeResponse(
+          req,
+          hcBuf,
+          srcImage.mimeType,
+          isPublishedRevision ? 'public, max-age=3600' : 'private, no-store',
+        );
       }
       const buf = await readBinaryAsset(srcImage.storageUri);
       return buildRangeResponse(

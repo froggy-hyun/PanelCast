@@ -50,6 +50,26 @@ export interface UploadedManuscriptFile {
   buffer: Buffer;
 }
 
+// 저시력 독자를 위한 웹툰 원고 고대비(High-Contrast) 이미지 변환 생성
+export async function generateHighContrastWebtoonImage(
+  buffer: Buffer,
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp',
+): Promise<Buffer> {
+  let pipeline = sharp(buffer)
+    .normalize()
+    .linear(1.48, -42)
+    .modulate({ saturation: 1.28 })
+    .sharpen({ sigma: 1.25 });
+
+  if (mimeType === 'image/png') {
+    return pipeline.png({ compressionLevel: 8 }).toBuffer();
+  }
+  if (mimeType === 'image/webp') {
+    return pipeline.webp({ quality: 90 }).toBuffer();
+  }
+  return pipeline.jpeg({ quality: 90 }).toBuffer();
+}
+
 export async function createEpisodeWithManuscript(params: {
   titleKo: string;
   titleEn: string;
@@ -68,7 +88,7 @@ export async function createEpisodeWithManuscript(params: {
   const episodeId =
     params.episodeId ||
     `ep_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
-  const revisionId = `rev_${ episodeId }_v1`;
+  const revisionId = `rev_${episodeId}_v1`;
 
   const sourceImages: SourceImage[] = [];
   let cumulativeYOffset = 0;
@@ -106,6 +126,14 @@ export async function createEpisodeWithManuscript(params: {
     const relativeKey = `episodes/${episodeId}/${revisionId}/sources/${sourceImageId}.${ext}`;
     const storageUri = await storeBinaryAsset(relativeKey, file.buffer, magicCheck.mimeType);
 
+    const hcBuffer = await generateHighContrastWebtoonImage(file.buffer, magicCheck.mimeType);
+    const hcRelativeKey = `episodes/${episodeId}/${revisionId}/sources/${sourceImageId}_hc.${ext}`;
+    const highContrastStorageUri = await storeBinaryAsset(
+      hcRelativeKey,
+      hcBuffer,
+      magicCheck.mimeType,
+    );
+
     sourceImages.push({
       sourceImageId,
       episodeId,
@@ -120,6 +148,7 @@ export async function createEpisodeWithManuscript(params: {
       globalYStart: cumulativeYOffset,
       globalYEnd: cumulativeYOffset + height,
       storageUri,
+      highContrastStorageUri,
     });
 
     cumulativeYOffset += height;

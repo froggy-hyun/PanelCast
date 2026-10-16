@@ -43,6 +43,7 @@ export interface SourceImage {
   globalYStart: number;
   globalYEnd: number;
   storageUri: string;
+  highContrastStorageUri?: string;
 }
 
 export interface RawTileSegment {
@@ -251,6 +252,7 @@ export interface ManifestPanelEntry {
   orderIndex: number;
   sourceImageId: string;
   imageUrl: string;
+  highContrastImageUrl?: string;
   globalYStart: number;
   globalYEnd: number;
   bbox: BoundingBox;

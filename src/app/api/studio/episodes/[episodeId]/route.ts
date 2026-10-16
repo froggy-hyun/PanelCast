@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyPublisherRequest } from '@/lib/auth';
 import {
   cloneRevisionAsEditableDraft,
+  deleteEpisode,
   getEpisode,
   getEpisodeTasks,
   getRevision,
@@ -352,3 +353,36 @@ export async function PATCH(
     staleSegmentCount,
   });
 }
+
+// 등록된 원고 삭제 (패스워드 7057 필수 검증)
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ episodeId: string }> },
+) {
+  const { episodeId } = await context.params;
+  const body = (await req.json().catch(() => ({}))) as { password?: string };
+  const providedPassword = (
+    body.password ||
+    req.headers.get('x-delete-password') ||
+    ''
+  ).trim();
+  const expectedPassword = (process.env.EPISODE_DELETE_PASSWORD || '7057').trim();
+
+  if (!providedPassword || providedPassword !== expectedPassword) {
+    return NextResponse.json(
+      { error: '원고 삭제 비밀번호가 올바르지 않습니다.' },
+      { status: 403 },
+    );
+  }
+
+  const deleted = await deleteEpisode(episodeId);
+  if (!deleted) {
+    return NextResponse.json({ error: '삭제할 에피소드를 찾을 수 없습니다.' }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    deleted: true,
+    episodeId,
+  });
+}
+

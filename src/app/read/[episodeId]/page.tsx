@@ -457,20 +457,34 @@ export default function AccessibleReaderPage() {
           backgroundColor: 'var(--bg-card)',
         }}
       >
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3.5">
             <Link
               href="/"
-              className="touch-target inline-flex items-center px-3 py-1.5 border rounded text-sm font-semibold no-underline"
+              className="inline-flex items-center gap-2 no-underline py-1"
+              aria-label="PanelCast 서재 홈으로 이동"
+            >
+              <img
+                src="/logo.png"
+                alt="PanelCast"
+                className="brand-logo"
+                width={158}
+                height={25}
+              />
+            </Link>
+            <Link
+              href="/"
+              className="touch-target inline-flex items-center px-3 py-1.5 border rounded-md text-xs sm:text-sm font-semibold no-underline"
               style={{
                 borderColor: 'var(--border-hairline)',
+                backgroundColor: 'var(--bg-paper)',
                 color: 'var(--ink-primary)',
               }}
             >
               {locale === 'ko' ? '← 서재로 돌아가기' : '← Back to Library'}
             </Link>
-            <div>
-              <h1 className="text-lg sm:text-xl font-bold leading-tight">
+            <div className="border-l pl-3.5" style={{ borderColor: 'var(--border-hairline)' }}>
+              <h1 className="font-editorial text-lg sm:text-xl font-bold leading-tight">
                 {episodeInfo
                   ? locale === 'ko'
                     ? episodeInfo.titleKo
@@ -480,10 +494,10 @@ export default function AccessibleReaderPage() {
                     : 'Webtoon Audio Reader'}
               </h1>
               {episodeInfo && (
-                <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                <p className="text-xs font-medium mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
                   {episodeInfo.authorName} ·{' '}
                   {locale === 'ko'
-                    ? `총 ${panels.length}컷 중 ${ panels.length > 0 ? currentPanelIndex + 1 : 0 }번째 컷`
+                    ? `총 ${panels.length}컷 중 ${panels.length > 0 ? currentPanelIndex + 1 : 0}번째 컷`
                     : `Cut ${panels.length > 0 ? currentPanelIndex + 1 : 0} of ${panels.length}`}
                 </p>
               )}
@@ -498,7 +512,7 @@ export default function AccessibleReaderPage() {
               type="button"
               data-testid="locale-toggle-btn"
               onClick={() => handleSwitchLocale(locale === 'ko' ? 'en' : 'ko')}
-              className="touch-target px-3.5 py-2 border rounded text-sm font-semibold cursor-pointer"
+              className="touch-target px-3.5 py-2 border rounded-md text-xs sm:text-sm font-semibold cursor-pointer"
               style={{
                 borderColor: 'var(--border-strong)',
                 backgroundColor: 'var(--bg-paper)',
@@ -510,16 +524,23 @@ export default function AccessibleReaderPage() {
 
             <button
               type="button"
+              data-testid="high-contrast-toggle-btn"
               onClick={() => setHighContrast(!highContrast)}
               aria-pressed={highContrast}
-              className="touch-target px-3.5 py-2 border rounded text-sm font-medium cursor-pointer"
+              className="touch-target px-3.5 py-2 border rounded-md text-xs sm:text-sm font-semibold cursor-pointer"
               style={{
-                borderColor: 'var(--border-hairline)',
+                borderColor: highContrast ? 'var(--border-strong)' : 'var(--border-hairline)',
                 backgroundColor: highContrast ? 'var(--ink-primary)' : 'var(--bg-paper)',
                 color: highContrast ? 'var(--bg-paper)' : 'var(--ink-primary)',
               }}
             >
-              {locale === 'ko' ? '고대비' : 'High Contrast'}
+              {locale === 'ko'
+                ? highContrast
+                  ? '고대비 웹툰 · UI 켜짐'
+                  : '고대비'
+                : highContrast
+                  ? 'High Contrast: ON'
+                  : 'High Contrast'}
             </button>
           </nav>
         </div>
@@ -528,8 +549,7 @@ export default function AccessibleReaderPage() {
       <main id="main-content" className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
         {loading ? (
           <div
-            className="p-10 border rounded text-center"
-            style={{ borderColor: 'var(--border-hairline)', backgroundColor: 'var(--bg-card)' }}
+            className="editorial-card p-10 rounded-xl text-center"
           >
             {locale === 'ko'
               ? '배리어프리 재생 대본과 음성 에셋을 불러오는 중입니다...'
@@ -538,8 +558,8 @@ export default function AccessibleReaderPage() {
         ) : loadError ? (
           <div
             role="alert"
-            className="p-8 border rounded space-y-3"
-            style={{ borderColor: 'var(--accent-vermilion)', backgroundColor: 'var(--bg-card)' }}
+            className="editorial-card p-8 rounded-xl space-y-3"
+            style={{ borderColor: 'var(--accent-vermilion)' }}
           >
             <h2 className="text-lg font-bold">
               {locale === 'ko' ? '에피소드를 불러올 수 없습니다' : 'Unable to load episode'}
@@ -547,7 +567,7 @@ export default function AccessibleReaderPage() {
             <p className="text-sm">{loadError}</p>
           </div>
         ) : !activePanel ? (
-          <div className="p-8 border rounded">
+          <div className="editorial-card p-8 rounded-xl">
             {locale === 'ko' ? '표시할 컷이 없습니다.' : 'No cuts available.'}
           </div>
         ) : (
@@ -555,11 +575,7 @@ export default function AccessibleReaderPage() {
             {/* 핵심 재생 컨트롤 바 */}
             <section
               aria-label={locale === 'ko' ? '오디오 재생 및 컷 이동 제어판' : 'Audio playback and cut navigation controls'}
-              className="p-4 sm:p-5 border rounded flex flex-wrap items-center justify-between gap-4"
-              style={{
-                borderColor: 'var(--border-strong)',
-                backgroundColor: 'var(--bg-card)',
-              }}
+              className="editorial-card p-4 sm:p-5 rounded-xl flex flex-wrap items-center justify-between gap-4"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -567,8 +583,8 @@ export default function AccessibleReaderPage() {
                   data-testid="prev-panel-btn"
                   disabled={currentPanelIndex <= 0}
                   onClick={() => handleJumpToPanel(currentPanelIndex - 1)}
-                  className="touch-target px-4 py-2.5 border rounded font-semibold text-sm cursor-pointer disabled:opacity-40"
-                  style={{ borderColor: 'var(--border-hairline)' }}
+                  className="touch-target px-4 py-2.5 border rounded-lg font-semibold text-sm cursor-pointer disabled:opacity-40"
+                  style={{ borderColor: 'var(--border-hairline)', backgroundColor: 'var(--bg-paper)' }}
                 >
                   {locale === 'ko' ? '이전 컷 (←/K)' : 'Prev Cut (←/K)'}
                 </button>
@@ -577,7 +593,7 @@ export default function AccessibleReaderPage() {
                   type="button"
                   data-testid="play-pause-btn"
                   onClick={handleTogglePlayPause}
-                  className="touch-target px-6 py-2.5 rounded font-bold text-sm cursor-pointer"
+                  className="touch-target px-6 py-2.5 rounded-lg font-bold text-sm cursor-pointer"
                   style={{
                     backgroundColor: 'var(--accent-vermilion)',
                     color: '#ffffff',
@@ -597,8 +613,8 @@ export default function AccessibleReaderPage() {
                   data-testid="next-panel-btn"
                   disabled={currentPanelIndex >= panels.length - 1}
                   onClick={() => handleJumpToPanel(currentPanelIndex + 1)}
-                  className="touch-target px-4 py-2.5 border rounded font-semibold text-sm cursor-pointer disabled:opacity-40"
-                  style={{ borderColor: 'var(--border-hairline)' }}
+                  className="touch-target px-4 py-2.5 border rounded-lg font-semibold text-sm cursor-pointer disabled:opacity-40"
+                  style={{ borderColor: 'var(--border-hairline)', backgroundColor: 'var(--bg-paper)' }}
                 >
                   {locale === 'ko' ? '다음 컷 (→/J)' : 'Next Cut (→/J)'}
                 </button>
@@ -607,8 +623,8 @@ export default function AccessibleReaderPage() {
                   type="button"
                   data-testid="replay-panel-btn"
                   onClick={handleReplayCurrentPanel}
-                  className="touch-target px-3.5 py-2.5 border rounded text-sm font-medium cursor-pointer"
-                  style={{ borderColor: 'var(--border-hairline)' }}
+                  className="touch-target px-3.5 py-2.5 border rounded-lg text-sm font-medium cursor-pointer"
+                  style={{ borderColor: 'var(--border-hairline)', backgroundColor: 'var(--bg-paper)' }}
                 >
                   {locale === 'ko' ? '현재 컷 다시 듣기 (R)' : 'Replay Cut (R)'}
                 </button>
@@ -622,7 +638,7 @@ export default function AccessibleReaderPage() {
                   id="playback-rate-select"
                   value={String(playbackRate)}
                   onChange={(e) => setPlaybackRate(Number(e.target.value))}
-                  className="touch-target px-3 py-2 border rounded text-sm font-semibold tabular-nums"
+                  className="touch-target px-3 py-2 border rounded-lg text-sm font-semibold tabular-nums"
                   style={{
                     borderColor: 'var(--border-hairline)',
                     backgroundColor: 'var(--bg-paper)',
@@ -639,35 +655,55 @@ export default function AccessibleReaderPage() {
 
             {/* 현재 활성 컷 상세 및 원고 뷰 */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* 좌측: 시각 원고 컷 하이라이트 뷰 (저시력 독자 및 정안인 동반 감상용) */}
+              {/* 좌측: 시각 원고 컷 하이라이트 뷰 (고대비 전환 시 고대비 원고 이미지로 교체) */}
               <section
                 aria-label={locale === 'ko' ? '현재 컷 원고 이미지' : 'Current cut manuscript image'}
-                className="lg:col-span-5 border rounded overflow-hidden"
-                style={{
-                  borderColor: 'var(--border-hairline)',
-                  backgroundColor: 'var(--bg-card)',
-                }}
+                className="lg:col-span-5 editorial-card rounded-xl overflow-hidden"
               >
                 <div
-                  className="px-4 py-2.5 border-b flex items-center justify-between text-xs font-semibold"
+                  className="px-4 py-3 border-b flex items-center justify-between text-xs font-semibold"
                   style={{
                     borderColor: 'var(--border-hairline)',
                     backgroundColor: 'var(--bg-subtle)',
                   }}
                 >
-                  <span data-testid="active-panel-indicator" className="tabular-nums">
+                  <span data-testid="active-panel-indicator" className="tabular-nums font-bold">
                     {locale === 'ko'
                       ? `제 ${currentPanelIndex + 1} 컷 / 전체 ${panels.length} 컷`
                       : `Cut ${currentPanelIndex + 1} of ${panels.length}`}
                   </span>
-                  <span>{activePanel.emotionalTone}</span>
+                  <div className="flex items-center gap-2">
+                    {highContrast && (
+                      <span
+                        data-testid="high-contrast-artwork-badge"
+                        className="px-2 py-0.5 rounded text-[11px] font-bold"
+                        style={{
+                          backgroundColor: 'var(--ink-primary)',
+                          color: 'var(--bg-paper)',
+                        }}
+                      >
+                        {locale === 'ko' ? '고대비 원고' : 'High-Contrast Art'}
+                      </span>
+                    )}
+                    <span>{activePanel.emotionalTone}</span>
+                  </div>
                 </div>
 
-                <div className="p-3 flex justify-center bg-black/5">
+                <div
+                  className="p-3 flex justify-center"
+                  style={{ backgroundColor: highContrast ? '#000000' : '#181816' }}
+                >
                   <img
-                    src={activePanel.imageUrl}
+                    data-testid="active-panel-image"
+                    data-contrast-mode={highContrast ? 'high' : 'normal'}
+                    src={
+                      highContrast
+                        ? activePanel.highContrastImageUrl ||
+                          `${activePanel.imageUrl}?contrast=high`
+                        : activePanel.imageUrl
+                    }
                     alt={activePanel.visualSummary}
-                    className="max-h-[540px] w-auto object-contain rounded border"
+                    className="max-h-[560px] w-auto object-contain rounded border"
                     style={{ borderColor: 'var(--border-hairline)' }}
                   />
                 </div>

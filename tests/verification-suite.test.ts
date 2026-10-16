@@ -562,6 +562,8 @@ describe('PanelCast Verification Suite (T01 - T18)', () => {
     expect(page2.panels).toHaveLength(1);
     expect(page2.panels[0].panelId).not.toBe(page1.panels[0].panelId);
 
+    expect(koManifest!.panels[0].highContrastImageUrl).toContain('?contrast=high');
+
     // T08: 기공개 에피소드 무중단 재편집(Draft Isolation)
     const clonedDraft = await cloneRevisionAsEditableDraft(
       episode.episodeId,
@@ -574,7 +576,7 @@ describe('PanelCast Verification Suite (T01 - T18)', () => {
     expect(epDuringDraft!.activeDraftRevisionId).toBe(clonedDraft.revisionId);
   });
 
-  it('T13 & T16: Authentication guard for Studio/Worker routes and magic-byte upload defense', async () => {
+  it('T13 & T16: Open MVP publisher access, invalid token guard, worker auth guard, and magic-byte defense', async () => {
     // T16: 위조된 이미지 바이트 거부
     const fakeJpg = Buffer.from('<!DOCTYPE html><html><body>not an image</body></html>', 'utf8');
     const magicResult = verifyImageMagicBytes(fakeJpg);
@@ -583,12 +585,20 @@ describe('PanelCast Verification Suite (T01 - T18)', () => {
     const realJpg = await createSyntheticStripBuffer(100, 100, { r: 200, g: 100, b: 50 });
     expect(verifyImageMagicBytes(realJpg).valid).toBe(true);
 
-    // T13: 미인증 요청 거부
-    const unauthReq = new NextRequest('http://localhost:3000/api/studio/episodes', {
+    // MVP 개방형 원고 등록 허용 및 명시적 오타 토큰/토큰 강제 옵션 검증
+    const openMvpReq = new NextRequest('http://localhost:3000/api/studio/episodes', {
       method: 'POST',
     });
-    const pubAuth = verifyPublisherRequest(unauthReq);
-    expect(pubAuth.authorized).toBe(false);
+    expect(verifyPublisherRequest(openMvpReq).authorized).toBe(true);
+    expect(verifyPublisherRequest(openMvpReq, { requireToken: true }).authorized).toBe(false);
+
+    const badTokenReq = new NextRequest('http://localhost:3000/api/studio/episodes', {
+      method: 'POST',
+      headers: {
+        'x-publisher-token': 'invalid-token-value',
+      },
+    });
+    expect(verifyPublisherRequest(badTokenReq).authorized).toBe(false);
 
     const unauthWorkerReq = new NextRequest('http://localhost:3000/api/worker/execute', {
       method: 'POST',
