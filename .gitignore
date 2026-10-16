@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Environment & Secrets (NEVER commit secrets or auth caches)
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.key
+*service-account*.json
+*credentials*.json
+.firebase/
+.gcloud/
+
+# Local runtime storage & uncommitted manuscripts
+.local-storage/
+.data/
+uploads/
+tmp/
+backups/
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Logs & Test artifacts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+playwright-report/
+test-results/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
