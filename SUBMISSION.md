@@ -5,6 +5,13 @@
 ### Tagline
 **PanelCast**: An AI-powered barrier-free webtoon publishing studio and screen-reader audio platform that turns vertical-scroll comics into multi-voice, spoiler-safe audio editions in Korean and English.
 
+### Live Deployment & Repository Links
+- **Production Web Application (`panelcast-web`)**: `https://panelcast-web-954098036508.asia-northeast3.run.app`
+- **Barrier-Free Reader (`Solo Max-Level Newbie — Ep. 02`)**: `https://panelcast-web-954098036508.asia-northeast3.run.app/read/ep_solo_max_newbie_02`
+- **Accessibility Customization Studio**: `https://panelcast-web-954098036508.asia-northeast3.run.app/studio/ep_solo_max_newbie_02`
+- **Private Async Worker (`panelcast-worker`)**: `https://panelcast-worker-954098036508.asia-northeast3.run.app`
+- **GitHub Repository**: `https://github.com/froggy-hyun/PanelCast`
+
 ### The Problem
 Webtoons are a visually driven medium built around long vertical-scroll canvases, dynamic panel layouts, expressive typography, and game-like system popups. For blind and low-vision readers, conventional OCR or screen readers fail completely:
 1. Long vertical strips (`96,000px+` per episode) split speech bubbles across image file boundaries.
@@ -14,7 +21,7 @@ Webtoons are a visually driven medium built around long vertical-scroll canvases
 
 ### Our Solution
 **PanelCast** embeds accessibility directly into the webtoon publishing workflow with two creator paths and a dedicated barrier-free reader:
-- **One-Shot Auto Publish (`바로 등록`)**: Creators upload their raw manuscript strips (`01.jpg`..`60.jpg`) and click once. PanelCast builds overlapping vertical tiles, uses **Gemini 4 Argon (`gemini-4-argon`)** to detect cut boundaries, write vivid Korean and English scene descriptions, attribute every dialogue bubble and system window, reconcile the episode cast, synthesize multi-character voices via **Gemini 3.8 Flash TTS (`gemini-3.8-flash-tts`)**, attach verified sound effects, run an automated validation and self-correction gate, and publish atomically.
+- **One-Shot Auto Publish (`바로 등록`)**: Creators upload their raw manuscript strips (`01.jpg`..`60.jpg`, `96,000px` total vertical height) and click once. PanelCast builds overlapping vertical tiles, uses **Gemini 4 Argon (`gemini-4-argon`)** to detect cut boundaries (`42 panels`), write vivid Korean and English scene descriptions, attribute every dialogue bubble and system window (`104 segments`), reconcile the episode cast (`19 characters`), synthesize multi-character voices via **Gemini 3.8 Flash TTS (`gemini-3.8-flash-tts`, `208 WAV assets`)**, attach verified sound effects (`22 sound cues`), run an automated validation and self-correction gate, and publish atomically.
 - **Accessibility Customization Studio (`접근성 커스텀`)**: When creators or editors want fine-grained direction, they open `/studio/[episodeId]` to customize character voice casting, spoiler-safe unrevealed aliases (`unrevealedLabel` + `revealedAtPanelId`), sound effect fallback modes, and cut hold timing—regenerating **only** the modified segments (`inputHash` guard) while keeping the live published edition untouched.
 - **Barrier-Free Webtoon Reader (`/read/[episodeId]`)**: A WCAG 2.1 AA compliant, keyboard-first (`Space`, `←/K`, `→/J`, `R`, `L`) and screen-reader friendly (`aria-live="polite"`) reader that plays cuts sequentially in Korean or English and offers a high-contrast editorial reading view for low-vision users.
 

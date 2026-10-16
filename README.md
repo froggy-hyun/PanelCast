@@ -2,6 +2,12 @@
 
 **PanelCast** transforms vertical-scroll webtoon manuscripts into barrier-free, multi-voice audio editions for blind and low-vision readers. Built with **Google Gemini (`gemini-4-argon` & `gemini-3.8-flash-tts`)** and **Google Cloud (`Cloud Run`, `Firestore`, `Cloud Storage`, `Cloud Tasks`, `Secret Manager`)**, PanelCast bridges the gap between webtoon creators on tight weekly deadlines and screen-reader users who need structured, spoiler-safe scene narration, expressive character voices, and verified sound effects.
 
+- **Live Production Web App (`panelcast-web`)**: `https://panelcast-web-954098036508.asia-northeast3.run.app`
+- **Live Accessible Reader (`ep_solo_max_newbie_02`)**: `https://panelcast-web-954098036508.asia-northeast3.run.app/read/ep_solo_max_newbie_02`
+- **Live Customization Studio (`ep_solo_max_newbie_02`)**: `https://panelcast-web-954098036508.asia-northeast3.run.app/studio/ep_solo_max_newbie_02`
+- **Private Worker Service (`panelcast-worker`)**: `https://panelcast-worker-954098036508.asia-northeast3.run.app`
+- **GitHub Repository**: `https://github.com/froggy-hyun/PanelCast`
+
 ---
 
 ## Key Capabilities
@@ -78,9 +84,9 @@ flowchart LR
 ## Featured Demo Episode
 
 - **Title**: *Solo Max-Level Newbie — Ep. 02: Prologue* (`나 혼자 만렙 뉴비 — 02화. 서막`)
-- **Episode ID**: `ep_solo_max_newbie_02`
-- **Source Manuscript**: 60 vertical JPEG strips (`01.jpg`–`60.jpg`, `690×1600px` each, `96,000px` total vertical height, `66.24 MP`)
-- **Processed Output**: Overlapping vertical tiles analyzed with `gemini-4-argon`, multi-character cast with spoiler-safe speaker naming, verified sound cues, and full Korean (`ko`) + English (`en`) WAV audio tracks.
+- **Episode ID**: `ep_solo_max_newbie_02` (`rev_ep_solo_max_newbie_02_v1`)
+- **Source Manuscript**: 60 vertical JPEG strips (`01.jpg`–`60.jpg`, `690×1600px` each, `96,000px` total vertical height, `66.24 MP`, 25 overlapping vertical tiles)
+- **Processed Output**: **42 narrative cuts/panels**, **104 dialogue & narration segments**, **19 distinct characters** with spoiler-safe speaker naming, **22 sound cues**, and **208 synthesized Korean (`ko`) + English (`en`) RIFF WAV audio tracks** (`status=published`, `valid=true`, `issues=0`).
 
 ---
 
