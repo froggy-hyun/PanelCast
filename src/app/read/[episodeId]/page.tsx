@@ -186,7 +186,7 @@ export default function AccessibleReaderPage() {
   }, []);
 
   const playSingleAudioUrl = useCallback(
-    (url: string, sessionId: number): Promise<boolean> => {
+    (url: string, sessionId: number, volume = 1.0): Promise<boolean> => {
       return new Promise((resolve) => {
         if (sessionId !== playbackSessionRef.current) {
           resolve(false);
@@ -211,6 +211,7 @@ export default function AccessibleReaderPage() {
         audio.onended = () => finish(true);
         audio.onerror = () => finish(true);
         audio.src = url;
+        audio.volume = Math.min(1, Math.max(0.1, volume));
         audio.playbackRate = playbackRateRef.current;
         setActiveAudioCount(1);
 
@@ -252,7 +253,8 @@ export default function AccessibleReaderPage() {
           for (const cue of panel.soundCues) {
             if (sessionId !== playbackSessionRef.current) return;
             if (cue.fallbackMode === 'sound_effect' && cue.audioUrl) {
-              const ok = await playSingleAudioUrl(cue.audioUrl, sessionId);
+              const sfxVol = Math.min(1, Math.max(0.18, Math.pow(10, (cue.gainDb ?? -4) / 20)));
+              const ok = await playSingleAudioUrl(cue.audioUrl, sessionId, sfxVol);
               if (!ok) return;
             }
           }
@@ -264,7 +266,7 @@ export default function AccessibleReaderPage() {
           setCurrentSegmentIndex(sIdx);
           const seg = panel.segments[sIdx];
 
-          const ok = await playSingleAudioUrl(seg.audioUrl, sessionId);
+          const ok = await playSingleAudioUrl(seg.audioUrl, sessionId, 1.0);
           if (!ok) return;
 
           if (seg.pauseAfterMs > 0) {

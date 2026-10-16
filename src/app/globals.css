@@ -51,7 +51,8 @@ body {
 }
 
 .font-editorial {
-  font-family: "Noto Serif KR", "Pretendard Variable", Pretendard, Georgia, serif;
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
   letter-spacing: -0.025em;
 }
 

@@ -418,12 +418,40 @@ export async function analyzeEpisodeRevisionTiles(params: {
         castOutcome.characters[0]?.characterId;
       const speakerChar = castOutcome.characters.find((c) => c.characterId === resolvedCharId);
 
+      // 시스템 창 세그먼트인 경우 시스템 알림 효과음 큐 자동 부착 (중복 방지)
+      if (rawSeg.kind === 'system_popup') {
+        const hasChimeInPanel = soundCues.some(
+          (c) => c.panelId === panelId && c.soundAssetId === 'sfx_system_chime',
+        );
+        if (!hasChimeInPanel) {
+          const cueId = `cue_${String(soundCues.length + 1).padStart(4, '0')}`;
+          const cue: SoundCue = {
+            cueId,
+            panelId,
+            episodeId: episode.episodeId,
+            revisionId: revision.revisionId,
+            orderIndex: soundCues.length,
+            rawSfxTextKo: '시스템 알림',
+            meaningKo: '상태창 및 시스템 팝업 알림음',
+            meaningEn: 'System status popup notification chime',
+            soundAssetId: 'sfx_system_chime',
+            confidence: 0.96,
+            fallbackMode: 'sound_effect',
+            offsetMs: 0,
+            gainDb: -5,
+          };
+          soundCues.push(cue);
+          panelSoundCueIds.push(cueId);
+        }
+      }
+
       // 효과음 세그먼트인 경우 검증된 사운드 라이브러리 매칭 시도
       if (rawSeg.kind === 'sfx') {
         const matchedSfx = resolveSoundEffectAsset({
           rawTextKo: rawSeg.textKo,
           meaningKo: rawSeg.deliveryStyleKo || rawSeg.textKo,
           meaningEn: rawSeg.deliveryStyleEn || rawSeg.textEn,
+          visualContextKo: dp.visualSummaryKo,
           suggestedCategory: rawSeg.suggestedSfxCategory,
           confidence: rawSeg.sfxConfidence,
         });
@@ -436,8 +464,8 @@ export async function analyzeEpisodeRevisionTiles(params: {
           revisionId: revision.revisionId,
           orderIndex: soundCues.length,
           rawSfxTextKo: rawSeg.textKo,
-          meaningKo: rawSeg.textKo,
-          meaningEn: rawSeg.textEn,
+          meaningKo: rawSeg.deliveryStyleKo || rawSeg.textKo,
+          meaningEn: rawSeg.deliveryStyleEn || rawSeg.textEn,
           soundAssetId: matchedSfx.asset?.soundAssetId,
           confidence: rawSeg.sfxConfidence ?? 0.85,
           fallbackMode: matchedSfx.fallbackMode,
@@ -447,10 +475,8 @@ export async function analyzeEpisodeRevisionTiles(params: {
         soundCues.push(cue);
         panelSoundCueIds.push(cueId);
 
-        // 사운드 에셋 매칭 신뢰도가 충분하면 오디오 큐로 재생하고, 불확실한 경우에만 음성 해설 세그먼트 추가
-        if (matchedSfx.fallbackMode === 'sound_effect' && matchedSfx.asset) {
-          continue;
-        }
+        // 시각 장면 해설이 이미 동작과 상황을 서술하므로 의성어 글자 자체를 성우가 읽지 않도록 오디오 큐로만 처리
+        continue;
       }
 
       const segId = `seg_${String(globalSegmentOrder + 1).padStart(4, '0')}`;

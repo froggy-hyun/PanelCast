@@ -21,6 +21,48 @@ interface PrebuiltVoiceOption {
   timbreEn: string;
 }
 
+function getPanelScenePreviewMeta(rev: Revision, panel: Panel | undefined) {
+  const fallbackPanel = panel ?? rev.panels[0];
+  if (!fallbackPanel) {
+    return {
+      imageUrl: '',
+      centerYPercent: 50,
+      startYPercent: 0,
+      heightPercent: 100,
+    };
+  }
+  const srcImg = rev.sourceImages.find((s) => s.sourceImageId === fallbackPanel.sourceImageId);
+  const imageUrl = `/api/assets/${rev.episodeId}/${rev.revisionId}/source/${fallbackPanel.sourceImageId}`;
+  if (!srcImg || srcImg.height <= 0) {
+    return {
+      imageUrl,
+      centerYPercent: 50,
+      startYPercent: 0,
+      heightPercent: 100,
+    };
+  }
+  const relStart = Math.max(0, fallbackPanel.globalYStart - srcImg.globalYStart);
+  const relEnd = Math.min(
+    srcImg.height,
+    Math.max(relStart + 40, fallbackPanel.globalYEnd - srcImg.globalYStart),
+  );
+  const centerYPercent = Math.min(
+    95,
+    Math.max(5, Math.round(((relStart + relEnd) / 2 / srcImg.height) * 100)),
+  );
+  const startYPercent = Math.min(92, Math.max(0, Math.round((relStart / srcImg.height) * 100)));
+  const heightPercent = Math.min(
+    100 - startYPercent,
+    Math.max(12, Math.round(((relEnd - relStart) / srcImg.height) * 100)),
+  );
+  return {
+    imageUrl,
+    centerYPercent,
+    startYPercent,
+    heightPercent,
+  };
+}
+
 export default function StudioCustomizationPage() {
   const params = useParams<{ episodeId: string }>();
   const router = useRouter();
@@ -38,10 +80,35 @@ export default function StudioCustomizationPage() {
   const [busyAction, setBusyAction] = useState('');
 
   const [selectedPanelIndex, setSelectedPanelIndex] = useState(0);
+  const [sceneViewMode, setSceneViewMode] = useState<'focused' | 'full'>('focused');
+  const [playingPreviewUrl, setPlayingPreviewUrl] = useState('');
   const [mergeSourceId, setMergeSourceId] = useState('');
   const [mergeTargetId, setMergeTargetId] = useState('');
   const [showDeletePrompt, setShowDeletePrompt] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
+  const previewAudioRef = React.useRef<HTMLAudioElement | null>(null);
+
+  const togglePreviewAudio = useCallback(
+    (url: string) => {
+      if (!url) return;
+      if (playingPreviewUrl === url && previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+        setPlayingPreviewUrl('');
+        return;
+      }
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+      const audio = new Audio(url);
+      previewAudioRef.current = audio;
+      setPlayingPreviewUrl(url);
+      audio.onended = () => setPlayingPreviewUrl('');
+      audio.onerror = () => setPlayingPreviewUrl('');
+      void audio.play().catch(() => setPlayingPreviewUrl(''));
+    },
+    [playingPreviewUrl],
+  );
 
   const loadStudioState = useCallback(async () => {
     setLoading(true);
@@ -674,480 +741,745 @@ export default function StudioCustomizationPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {revision.characters.map((char) => (
-              <div
-                key={char.characterId}
-                className="p-4 border rounded space-y-3"
-                style={{
-                  borderColor: 'var(--border-hairline)',
-                  backgroundColor: 'var(--bg-paper)',
-                }}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <input
-                    type="text"
-                    aria-label={`${char.canonicalNameKo} 한국어 이름`}
-                    value={char.canonicalNameKo}
-                    onChange={(e) =>
-                      updateCharacter(char.characterId, (c) => ({
-                        ...c,
-                        canonicalNameKo: e.target.value,
-                      }))
-                    }
-                    className="font-bold text-sm px-2 py-1 border rounded w-1/2"
-                    style={{ borderColor: 'var(--border-hairline)' }}
-                  />
-                  <input
-                    type="text"
-                    aria-label={`${char.canonicalNameEn} 영어 이름`}
-                    value={char.canonicalNameEn}
-                    onChange={(e) =>
-                      updateCharacter(char.characterId, (c) => ({
-                        ...c,
-                        canonicalNameEn: e.target.value,
-                      }))
-                    }
-                    className="text-xs px-2 py-1 border rounded w-1/2"
-                    style={{ borderColor: 'var(--border-hairline)' }}
-                  />
-                </div>
+            {revision.characters.map((char) => {
+              const charDialogueSegs = revision.segments.filter(
+                (s) => s.speakerCharacterId === char.characterId && s.kind !== 'narration',
+              );
+              const charAllSegs = revision.segments.filter(
+                (s) => s.speakerCharacterId === char.characterId,
+              );
+              const repPanel =
+                (char.revealedAtPanelId
+                  ? revision.panels.find((p) => p.panelId === char.revealedAtPanelId)
+                  : undefined) ||
+                revision.panels.find((p) =>
+                  charDialogueSegs.some((s) => s.panelId === p.panelId),
+                ) ||
+                revision.panels.find((p) =>
+                  charAllSegs.some((s) => s.panelId === p.panelId),
+                ) ||
+                revision.panels[0];
+              const charSceneMeta = getPanelScenePreviewMeta(revision, repPanel);
+              const sampleLine = (charDialogueSegs[0] ?? charAllSegs[0])?.textKo;
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label
-                      htmlFor={`voice-ko-${char.characterId}`}
-                      className="block font-semibold mb-1"
+              return (
+                <div
+                  key={char.characterId}
+                  data-testid={`character-card-${char.characterId}`}
+                  className="p-4 border rounded space-y-3"
+                  style={{
+                    borderColor: 'var(--border-hairline)',
+                    backgroundColor: 'var(--bg-paper)',
+                  }}
+                >
+                  {/* 인물 등장 장면 사진 및 대표 대사 요약 */}
+                  {repPanel && charSceneMeta.imageUrl && (
+                    <div
+                      className="p-2.5 border rounded flex items-start gap-3"
+                      style={{
+                        borderColor: 'var(--border-hairline)',
+                        backgroundColor: 'var(--bg-card)',
+                      }}
                     >
-                      한국어 성우 보이스
-                    </label>
-                    <select
-                      id={`voice-ko-${char.characterId}`}
-                      value={char.voiceProfile.koVoiceName}
+                      <div
+                        className="relative w-20 h-20 rounded overflow-hidden border shrink-0 bg-neutral-900"
+                        style={{ borderColor: 'var(--border-hairline)' }}
+                      >
+                        <img
+                          src={charSceneMeta.imageUrl}
+                          alt={`${char.canonicalNameKo} 등장 장면 (제 ${repPanel.orderIndex + 1} 컷)`}
+                          data-testid={`character-scene-img-${char.characterId}`}
+                          className="w-full h-full object-cover"
+                          style={{
+                            objectPosition: `50% ${charSceneMeta.centerYPercent}%`,
+                          }}
+                        />
+                        <span
+                          className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums"
+                          style={{
+                            backgroundColor: 'rgba(20, 20, 19, 0.85)',
+                            color: '#ffffff',
+                          }}
+                        >
+                          제 {repPanel.orderIndex + 1} 컷
+                        </span>
+                      </div>
+
+                      <div className="min-w-0 flex-1 space-y-1 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-1">
+                          <span
+                            className="font-bold text-[11px]"
+                            style={{ color: 'var(--accent-vermilion)' }}
+                          >
+                            등장 장면 · 제 {repPanel.orderIndex + 1} 컷 (대사 {charAllSegs.length}건)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPanelIndex(repPanel.orderIndex);
+                              const el = document.getElementById('cut-workbench-section');
+                              if (el && typeof el.scrollIntoView === 'function') {
+                                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              }
+                            }}
+                            className="px-2 py-0.5 border rounded text-[11px] font-semibold cursor-pointer"
+                            style={{
+                              borderColor: 'var(--border-hairline)',
+                              backgroundColor: 'var(--bg-paper)',
+                            }}
+                          >
+                            장면 이동 →
+                          </button>
+                        </div>
+                        <p
+                          className="line-clamp-2 text-[11px] leading-snug"
+                          style={{ color: 'var(--ink-secondary)' }}
+                        >
+                          {sampleLine ? `"${sampleLine}"` : repPanel.visualSummaryKo}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="text"
+                      aria-label={`${char.canonicalNameKo} 한국어 이름`}
+                      value={char.canonicalNameKo}
                       onChange={(e) =>
                         updateCharacter(char.characterId, (c) => ({
                           ...c,
-                          voiceProfile: {
-                            ...c.voiceProfile,
-                            koVoiceName: e.target.value,
-                          },
+                          canonicalNameKo: e.target.value,
                         }))
                       }
-                      className="touch-target w-full px-2 py-1.5 border rounded"
+                      className="font-bold text-sm px-2 py-1 border rounded w-1/2"
                       style={{ borderColor: 'var(--border-hairline)' }}
-                    >
-                      {prebuiltVoices.map((v) => (
-                        <option key={v.voiceName} value={v.voiceName}>
-                          {v.voiceName} ({v.timbreKo})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor={`voice-en-${char.characterId}`}
-                      className="block font-semibold mb-1"
-                    >
-                      영어 성우 보이스
-                    </label>
-                    <select
-                      id={`voice-en-${char.characterId}`}
-                      value={char.voiceProfile.enVoiceName}
+                    />
+                    <input
+                      type="text"
+                      aria-label={`${char.canonicalNameEn} 영어 이름`}
+                      value={char.canonicalNameEn}
                       onChange={(e) =>
                         updateCharacter(char.characterId, (c) => ({
                           ...c,
-                          voiceProfile: {
-                            ...c.voiceProfile,
-                            enVoiceName: e.target.value,
-                          },
+                          canonicalNameEn: e.target.value,
                         }))
                       }
-                      className="touch-target w-full px-2 py-1.5 border rounded"
+                      className="text-xs px-2 py-1 border rounded w-1/2"
                       style={{ borderColor: 'var(--border-hairline)' }}
-                    >
-                      {prebuiltVoices.map((v) => (
-                        <option key={v.voiceName} value={v.voiceName}>
-                          {v.voiceName} ({v.timbreEn})
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label
+                        htmlFor={`voice-ko-${char.characterId}`}
+                        className="block font-semibold mb-1"
+                      >
+                        한국어 성우 보이스
+                      </label>
+                      <select
+                        id={`voice-ko-${char.characterId}`}
+                        value={char.voiceProfile.koVoiceName}
+                        onChange={(e) =>
+                          updateCharacter(char.characterId, (c) => ({
+                            ...c,
+                            voiceProfile: {
+                              ...c.voiceProfile,
+                              koVoiceName: e.target.value,
+                            },
+                          }))
+                        }
+                        className="touch-target w-full px-2 py-1.5 border rounded"
+                        style={{ borderColor: 'var(--border-hairline)' }}
+                      >
+                        {prebuiltVoices.map((v) => (
+                          <option key={v.voiceName} value={v.voiceName}>
+                            {v.voiceName} ({v.timbreKo})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor={`voice-en-${char.characterId}`}
+                        className="block font-semibold mb-1"
+                      >
+                        영어 성우 보이스
+                      </label>
+                      <select
+                        id={`voice-en-${char.characterId}`}
+                        value={char.voiceProfile.enVoiceName}
+                        onChange={(e) =>
+                          updateCharacter(char.characterId, (c) => ({
+                            ...c,
+                            voiceProfile: {
+                              ...c.voiceProfile,
+                              enVoiceName: e.target.value,
+                            },
+                          }))
+                        }
+                        className="touch-target w-full px-2 py-1.5 border rounded"
+                        style={{ borderColor: 'var(--border-hairline)' }}
+                      >
+                        {prebuiltVoices.map((v) => (
+                          <option key={v.voiceName} value={v.voiceName}>
+                            {v.voiceName} ({v.timbreEn})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label
+                        htmlFor={`unrevealed-${char.characterId}`}
+                        className="block font-semibold mb-1"
+                      >
+                        공개 전 가명 (스포일러 방지)
+                      </label>
+                      <input
+                        id={`unrevealed-${char.characterId}`}
+                        type="text"
+                        value={char.unrevealedLabelKo}
+                        onChange={(e) =>
+                          updateCharacter(char.characterId, (c) => ({
+                            ...c,
+                            unrevealedLabelKo: e.target.value,
+                          }))
+                        }
+                        className="w-full px-2 py-1.5 border rounded"
+                        style={{ borderColor: 'var(--border-hairline)' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor={`reveal-panel-${char.characterId}`}
+                        className="block font-semibold mb-1"
+                      >
+                        실명 공개 시점 컷
+                      </label>
+                      <select
+                        id={`reveal-panel-${char.characterId}`}
+                        value={char.revealedAtPanelId || ''}
+                        onChange={(e) =>
+                          updateCharacter(char.characterId, (c) => ({
+                            ...c,
+                            revealedAtPanelId: e.target.value || undefined,
+                          }))
+                        }
+                        className="w-full px-2 py-1.5 border rounded"
+                        style={{ borderColor: 'var(--border-hairline)' }}
+                      >
+                        <option value="">처음부터 실명 공개</option>
+                        {revision.panels.map((p, idx) => (
+                          <option key={p.panelId} value={p.panelId}>
+                            {idx + 1}번째 컷 ({p.panelId})부터 실명 공개
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="text-xs">
                     <label
-                      htmlFor={`unrevealed-${char.characterId}`}
+                      htmlFor={`style-ko-${char.characterId}`}
                       className="block font-semibold mb-1"
                     >
-                      공개 전 가명 (스포일러 방지)
+                      연기 디렉션 (Style Prompt)
                     </label>
                     <input
-                      id={`unrevealed-${char.characterId}`}
+                      id={`style-ko-${char.characterId}`}
                       type="text"
-                      value={char.unrevealedLabelKo}
+                      value={char.voiceProfile.stylePromptKo}
                       onChange={(e) =>
                         updateCharacter(char.characterId, (c) => ({
                           ...c,
-                          unrevealedLabelKo: e.target.value,
+                          voiceProfile: {
+                            ...c.voiceProfile,
+                            stylePromptKo: e.target.value,
+                          },
                         }))
                       }
                       className="w-full px-2 py-1.5 border rounded"
                       style={{ borderColor: 'var(--border-hairline)' }}
                     />
                   </div>
-
-                  <div>
-                    <label
-                      htmlFor={`reveal-panel-${char.characterId}`}
-                      className="block font-semibold mb-1"
-                    >
-                      실명 공개 시점 컷
-                    </label>
-                    <select
-                      id={`reveal-panel-${char.characterId}`}
-                      value={char.revealedAtPanelId || ''}
-                      onChange={(e) =>
-                        updateCharacter(char.characterId, (c) => ({
-                          ...c,
-                          revealedAtPanelId: e.target.value || undefined,
-                        }))
-                      }
-                      className="w-full px-2 py-1.5 border rounded"
-                      style={{ borderColor: 'var(--border-hairline)' }}
-                    >
-                      <option value="">처음부터 실명 공개</option>
-                      {revision.panels.map((p, idx) => (
-                        <option key={p.panelId} value={p.panelId}>
-                          {idx + 1}번째 컷 ({p.panelId})부터 실명 공개
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
-
-                <div className="text-xs">
-                  <label
-                    htmlFor={`style-ko-${char.characterId}`}
-                    className="block font-semibold mb-1"
-                  >
-                    연기 디렉션 (Style Prompt)
-                  </label>
-                  <input
-                    id={`style-ko-${char.characterId}`}
-                    type="text"
-                    value={char.voiceProfile.stylePromptKo}
-                    onChange={(e) =>
-                      updateCharacter(char.characterId, (c) => ({
-                        ...c,
-                        voiceProfile: {
-                          ...c.voiceProfile,
-                          stylePromptKo: e.target.value,
-                        },
-                      }))
-                    }
-                    className="w-full px-2 py-1.5 border rounded"
-                    style={{ borderColor: 'var(--border-hairline)' }}
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
         {/* 섹션 2: 컷별 장면 해설, 전환 대기 시간(extraHoldMs), 효과음, 세그먼트 대사 편집 */}
-        {activePanel && (
-          <section
-            aria-labelledby="cut-workbench-heading"
-            className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
-          >
-            {/* 좌측 컷 선택 목록 */}
-            <div
-              className="lg:col-span-3 p-4 border rounded space-y-3 max-h-[680px] overflow-y-auto"
-              style={{
-                borderColor: 'var(--border-hairline)',
-                backgroundColor: 'var(--bg-card)',
-              }}
+        {activePanel && (() => {
+          const activeCutMeta = getPanelScenePreviewMeta(revision, activePanel);
+          const activeCutCharacters = revision.characters.filter((c) =>
+            panelSegments.some((s) => s.speakerCharacterId === c.characterId),
+          );
+
+          return (
+            <section
+              id="cut-workbench-section"
+              aria-labelledby="cut-workbench-heading"
+              className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
             >
-              <h2 id="cut-workbench-heading" className="text-sm font-bold">
-                컷 목록 ({revision.panels.length}컷)
-              </h2>
-              <div className="space-y-1.5">
-                {revision.panels.map((p, idx) => (
-                  <button
-                    key={p.panelId}
-                    type="button"
-                    onClick={() => setSelectedPanelIndex(idx)}
-                    className="touch-target w-full text-left px-3 py-2 rounded border text-xs cursor-pointer"
-                    style={{
-                      borderColor:
-                        idx === selectedPanelIndex
-                          ? 'var(--accent-vermilion)'
-                          : 'var(--border-hairline)',
-                      backgroundColor:
-                        idx === selectedPanelIndex
-                          ? 'var(--bg-subtle)'
-                          : 'var(--bg-paper)',
-                    }}
-                  >
-                    <div className="font-bold">
-                      제 {idx + 1} 컷 ({p.panelId})
-                    </div>
-                    <div className="truncate mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
-                      {p.visualSummaryKo}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 우측 선택된 컷 편집 패널 */}
-            <div
-              className="lg:col-span-9 p-6 border rounded space-y-6"
-              style={{
-                borderColor: 'var(--border-hairline)',
-                backgroundColor: 'var(--bg-card)',
-              }}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--border-hairline)' }}>
-                <div>
-                  <h3 className="text-lg font-bold">
-                    제 {selectedPanelIndex + 1} 컷 세부 연출 ({activePanel.panelId})
-                  </h3>
-                  <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                    원고 Y좌표: {activePanel.globalYStart}px ~ {activePanel.globalYEnd}px
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs">
-                  <label htmlFor="panel-hold-ms" className="font-semibold">
-                    컷 종료 후 여운 대기 시간(ms):
-                  </label>
-                  <input
-                    id="panel-hold-ms"
-                    type="number"
-                    min={0}
-                    max={5000}
-                    step={50}
-                    value={activePanel.extraHoldMs}
-                    onChange={(e) =>
-                      updatePanel(activePanel.panelId, (p) => ({
-                        ...p,
-                        extraHoldMs: Number(e.target.value),
-                      }))
-                    }
-                    className="touch-target w-24 px-2.5 py-1.5 border rounded font-bold tabular-nums"
-                    style={{ borderColor: 'var(--border-hairline)' }}
-                  />
-                </div>
-              </div>
-
-              {/* 장면 해설 편집 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="panel-summary-ko" className="block text-xs font-bold mb-1">
-                    시각 장면 해설 (한국어)
-                  </label>
-                  <textarea
-                    id="panel-summary-ko"
-                    rows={3}
-                    value={activePanel.visualSummaryKo}
-                    onChange={(e) =>
-                      updatePanel(activePanel.panelId, (p) => ({
-                        ...p,
-                        visualSummaryKo: e.target.value,
-                      }))
-                    }
-                    className="w-full p-2.5 border rounded text-sm"
-                    style={{ borderColor: 'var(--border-hairline)' }}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="panel-summary-en" className="block text-xs font-bold mb-1">
-                    Visual Scene Description (English)
-                  </label>
-                  <textarea
-                    id="panel-summary-en"
-                    rows={3}
-                    value={activePanel.visualSummaryEn}
-                    onChange={(e) =>
-                      updatePanel(activePanel.panelId, (p) => ({
-                        ...p,
-                        visualSummaryEn: e.target.value,
-                      }))
-                    }
-                    className="w-full p-2.5 border rounded text-sm"
-                    style={{ borderColor: 'var(--border-hairline)' }}
-                  />
-                </div>
-              </div>
-
-              {/* 음향 효과 큐 편집 */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-bold">
-                  컷 음향 효과 큐 ({panelCues.length}건)
-                </h4>
-                {panelCues.length === 0 ? (
-                  <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                    이 컷에는 별도의 음향 효과 큐가 없습니다.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {panelCues.map((cue) => (
-                      <div
-                        key={cue.cueId}
-                        className="p-3 border rounded flex flex-wrap items-center justify-between gap-3 text-xs"
+              {/* 좌측 컷 선택 목록 (썸네일 포함) */}
+              <div
+                className="lg:col-span-3 p-4 border rounded space-y-3 max-h-[820px] overflow-y-auto"
+                style={{
+                  borderColor: 'var(--border-hairline)',
+                  backgroundColor: 'var(--bg-card)',
+                }}
+              >
+                <h2 id="cut-workbench-heading" className="text-sm font-bold">
+                  컷 목록 ({revision.panels.length}컷)
+                </h2>
+                <div className="space-y-1.5">
+                  {revision.panels.map((p, idx) => {
+                    const cutMeta = getPanelScenePreviewMeta(revision, p);
+                    return (
+                      <button
+                        key={p.panelId}
+                        type="button"
+                        onClick={() => setSelectedPanelIndex(idx)}
+                        className="touch-target w-full text-left p-2 rounded border text-xs cursor-pointer flex items-center gap-2.5"
                         style={{
-                          borderColor: 'var(--border-hairline)',
-                          backgroundColor: 'var(--bg-paper)',
+                          borderColor:
+                            idx === selectedPanelIndex
+                              ? 'var(--accent-vermilion)'
+                              : 'var(--border-hairline)',
+                          backgroundColor:
+                            idx === selectedPanelIndex
+                              ? 'var(--bg-subtle)'
+                              : 'var(--bg-paper)',
                         }}
                       >
-                        <div>
-                          <span className="font-bold">원문 의성어: {cue.rawSfxTextKo}</span>
-                          <span className="ml-2" style={{ color: 'var(--ink-secondary)' }}>
-                            ({cue.meaningKo})
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <select
-                            aria-label={`${cue.rawSfxTextKo} 음향 에셋 선택`}
-                            value={cue.soundAssetId || ''}
-                            onChange={(e) =>
-                              updateSoundCue(cue.cueId, (c) => ({
-                                ...c,
-                                soundAssetId: e.target.value || undefined,
-                                fallbackMode: e.target.value ? 'sound_effect' : 'text_only',
-                              }))
-                            }
-                            className="touch-target px-2.5 py-1 border rounded"
+                        {cutMeta.imageUrl && (
+                          <div
+                            className="w-12 h-12 rounded overflow-hidden border shrink-0 bg-neutral-900"
                             style={{ borderColor: 'var(--border-hairline)' }}
                           >
-                            <option value="">음성 해설 폴백 (Text Only)</option>
-                            {soundLibrary.map((s) => (
-                              <option key={s.soundAssetId} value={s.soundAssetId}>
-                                {s.titleKo} ({s.durationMs}ms)
-                              </option>
-                            ))}
-                          </select>
+                            <img
+                              src={cutMeta.imageUrl}
+                              alt={`제 ${idx + 1} 컷 썸네일`}
+                              className="w-full h-full object-cover"
+                              style={{ objectPosition: `50% ${cutMeta.centerYPercent}%` }}
+                            />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold">
+                            제 {idx + 1} 컷 ({p.panelId})
+                          </div>
+                          <div className="truncate mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
+                            {p.visualSummaryKo}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 세그먼트 대사 및 내레이션 편집 */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-bold">
-                  세그먼트 대사 · 내레이션 트랙 ({panelSegments.length}건)
-                </h4>
-                <div className="space-y-3">
-                  {panelSegments.map((seg) => (
-                    <div
-                      key={seg.segmentId}
-                      className="p-4 border rounded space-y-3"
-                      style={{
-                        borderColor: 'var(--border-hairline)',
-                        backgroundColor: 'var(--bg-paper)',
-                      }}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold uppercase px-2 py-0.5 rounded border">
-                            {seg.kind}
-                          </span>
-                          <select
-                            aria-label={`${seg.segmentId} 화자 선택`}
-                            value={seg.speakerCharacterId || ''}
-                            onChange={(e) =>
-                              updateSegment(seg.segmentId, (s) => ({
-                                ...s,
-                                speakerCharacterId: e.target.value,
-                              }))
-                            }
-                            className="touch-target px-2.5 py-1 border rounded font-semibold"
-                            style={{ borderColor: 'var(--border-hairline)' }}
-                          >
-                            {revision.characters.map((c) => (
-                              <option key={c.characterId} value={c.characterId}>
-                                {c.canonicalNameKo} ({c.voiceProfile.koVoiceName})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <label htmlFor={`pause-${seg.segmentId}`}>대사 후 호흡(ms):</label>
-                          <input
-                            id={`pause-${seg.segmentId}`}
-                            type="number"
-                            min={0}
-                            max={3000}
-                            step={20}
-                            value={seg.pauseAfterMs}
-                            onChange={(e) =>
-                              updateSegment(seg.segmentId, (s) => ({
-                                ...s,
-                                pauseAfterMs: Number(e.target.value),
-                              }))
-                            }
-                            className="w-20 px-2 py-1 border rounded tabular-nums"
-                            style={{ borderColor: 'var(--border-hairline)' }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
-                          <label
-                            htmlFor={`seg-ko-${seg.segmentId}`}
-                            className="block text-xs font-semibold mb-1"
-                          >
-                            한국어 낭독 대본
-                          </label>
-                          <textarea
-                            id={`seg-ko-${seg.segmentId}`}
-                            rows={2}
-                            value={seg.textKo}
-                            onChange={(e) =>
-                              updateSegment(seg.segmentId, (s) => ({
-                                ...s,
-                                textKo: e.target.value,
-                              }))
-                            }
-                            className="w-full p-2 border rounded text-sm"
-                            style={{ borderColor: 'var(--border-hairline)' }}
-                          />
-                        </div>
-                        <div>
-                          <label
-                            htmlFor={`seg-en-${seg.segmentId}`}
-                            className="block text-xs font-semibold mb-1"
-                          >
-                            English Script
-                          </label>
-                          <textarea
-                            id={`seg-en-${seg.segmentId}`}
-                            rows={2}
-                            value={seg.textEn}
-                            onChange={(e) =>
-                              updateSegment(seg.segmentId, (s) => ({
-                                ...s,
-                                textEn: e.target.value,
-                              }))
-                            }
-                            className="w-full p-2 border rounded text-sm"
-                            style={{ borderColor: 'var(--border-hairline)' }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-          </section>
-        )}
+
+              {/* 우측 선택된 컷 편집 패널 */}
+              <div
+                className="lg:col-span-9 p-6 border rounded space-y-6"
+                style={{
+                  borderColor: 'var(--border-hairline)',
+                  backgroundColor: 'var(--bg-card)',
+                }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--border-hairline)' }}>
+                  <div>
+                    <h3 className="text-lg font-bold">
+                      제 {selectedPanelIndex + 1} 컷 세부 연출 ({activePanel.panelId})
+                    </h3>
+                    <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                      원고 Y좌표: {activePanel.globalYStart}px ~ {activePanel.globalYEnd}px · 원본 스트립: {activePanel.sourceImageId}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs">
+                    <label htmlFor="panel-hold-ms" className="font-semibold">
+                      컷 종료 후 여운 대기 시간(ms):
+                    </label>
+                    <input
+                      id="panel-hold-ms"
+                      type="number"
+                      min={0}
+                      max={5000}
+                      step={50}
+                      value={activePanel.extraHoldMs}
+                      onChange={(e) =>
+                        updatePanel(activePanel.panelId, (p) => ({
+                          ...p,
+                          extraHoldMs: Number(e.target.value),
+                        }))
+                      }
+                      className="touch-target w-24 px-2.5 py-1.5 border rounded font-bold tabular-nums"
+                      style={{ borderColor: 'var(--border-hairline)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* 현재 컷 원본 장면 이미지 + 시각 장면 해설 대조 편집 */}
+                <div
+                  data-testid="studio-active-cut-scene-preview"
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-4 border rounded"
+                  style={{
+                    borderColor: 'var(--border-hairline)',
+                    backgroundColor: 'var(--bg-paper)',
+                  }}
+                >
+                  <div className="lg:col-span-5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold">
+                        웹툰 장면 사진 프리뷰 (제 {selectedPanelIndex + 1} 컷)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSceneViewMode((prev) => (prev === 'focused' ? 'full' : 'focused'))
+                        }
+                        className="px-2.5 py-1 border rounded text-[11px] font-semibold cursor-pointer"
+                        style={{
+                          borderColor: 'var(--border-hairline)',
+                          backgroundColor: 'var(--bg-card)',
+                        }}
+                      >
+                        {sceneViewMode === 'focused'
+                          ? '원본 스트립 전체 보기'
+                          : '현재 컷 중심 보기'}
+                      </button>
+                    </div>
+
+                    {activeCutMeta.imageUrl && (
+                      <div
+                        className="relative w-full rounded overflow-hidden border bg-neutral-900"
+                        style={{ borderColor: 'var(--border-hairline)' }}
+                      >
+                        {sceneViewMode === 'focused' ? (
+                          <img
+                            src={activeCutMeta.imageUrl}
+                            alt={`제 ${selectedPanelIndex + 1} 컷 장면 프리뷰`}
+                            data-testid="studio-active-cut-img"
+                            className="w-full h-72 sm:h-80 object-cover"
+                            style={{
+                              objectPosition: `50% ${activeCutMeta.centerYPercent}%`,
+                            }}
+                          />
+                        ) : (
+                          <div className="relative max-h-96 overflow-y-auto">
+                            <img
+                              src={activeCutMeta.imageUrl}
+                              alt={`제 ${selectedPanelIndex + 1} 컷 전체 원고 스트립`}
+                              data-testid="studio-active-cut-img"
+                              className="w-full h-auto block"
+                            />
+                            <div
+                              aria-hidden="true"
+                              className="absolute left-0 right-0 pointer-events-none border-2"
+                              style={{
+                                top: `${activeCutMeta.startYPercent}%`,
+                                height: `${activeCutMeta.heightPercent}%`,
+                                borderColor: 'var(--accent-vermilion)',
+                                backgroundColor: 'rgba(166, 50, 27, 0.14)',
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {activeCutCharacters.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[11px] font-semibold" style={{ color: 'var(--ink-secondary)' }}>
+                          이 컷의 참여 화자:
+                        </span>
+                        {activeCutCharacters.map((c) => (
+                          <span
+                            key={c.characterId}
+                            className="px-2 py-0.5 border rounded text-[11px] font-bold"
+                            style={{
+                              borderColor: 'var(--border-hairline)',
+                              backgroundColor: 'var(--bg-card)',
+                            }}
+                          >
+                            {c.canonicalNameKo} ({c.voiceProfile.koVoiceName})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="lg:col-span-7 space-y-4">
+                    <div>
+                      <label htmlFor="panel-summary-ko" className="block text-xs font-bold mb-1">
+                        시각 장면 해설 (한국어 · 장면 사진과 대조하여 편집)
+                      </label>
+                      <textarea
+                        id="panel-summary-ko"
+                        rows={4}
+                        value={activePanel.visualSummaryKo}
+                        onChange={(e) =>
+                          updatePanel(activePanel.panelId, (p) => ({
+                            ...p,
+                            visualSummaryKo: e.target.value,
+                          }))
+                        }
+                        className="w-full p-2.5 border rounded text-sm"
+                        style={{
+                          borderColor: 'var(--border-hairline)',
+                          backgroundColor: 'var(--bg-card)',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="panel-summary-en" className="block text-xs font-bold mb-1">
+                        Visual Scene Description (English)
+                      </label>
+                      <textarea
+                        id="panel-summary-en"
+                        rows={4}
+                        value={activePanel.visualSummaryEn}
+                        onChange={(e) =>
+                          updatePanel(activePanel.panelId, (p) => ({
+                            ...p,
+                            visualSummaryEn: e.target.value,
+                          }))
+                        }
+                        className="w-full p-2.5 border rounded text-sm"
+                        style={{
+                          borderColor: 'var(--border-hairline)',
+                          backgroundColor: 'var(--bg-card)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 음향 효과 큐 편집 */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-bold">
+                    컷 음향 효과 큐 ({panelCues.length}건)
+                  </h4>
+                  {panelCues.length === 0 ? (
+                    <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                      이 컷에는 별도의 음향 효과 큐가 없습니다.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {panelCues.map((cue) => {
+                        const sfxUrl = cue.soundAssetId
+                          ? `/api/assets/sfx/${cue.soundAssetId}.wav`
+                          : '';
+                        return (
+                          <div
+                            key={cue.cueId}
+                            className="p-3 border rounded flex flex-wrap items-center justify-between gap-3 text-xs"
+                            style={{
+                              borderColor: 'var(--border-hairline)',
+                              backgroundColor: 'var(--bg-paper)',
+                            }}
+                          >
+                            <div>
+                              <span className="font-bold">원문 의성어: {cue.rawSfxTextKo}</span>
+                              <span className="ml-2" style={{ color: 'var(--ink-secondary)' }}>
+                                ({cue.meaningKo})
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {sfxUrl && cue.fallbackMode === 'sound_effect' && (
+                                <button
+                                  type="button"
+                                  onClick={() => togglePreviewAudio(sfxUrl)}
+                                  className="touch-target px-2.5 py-1 border rounded font-semibold cursor-pointer"
+                                  style={{
+                                    borderColor: 'var(--border-hairline)',
+                                    backgroundColor:
+                                      playingPreviewUrl === sfxUrl
+                                        ? 'var(--accent-vermilion)'
+                                        : 'var(--bg-card)',
+                                    color:
+                                      playingPreviewUrl === sfxUrl
+                                        ? '#ffffff'
+                                        : 'var(--ink-primary)',
+                                  }}
+                                >
+                                  {playingPreviewUrl === sfxUrl ? '정지 ■' : '효과음 미리듣기 ▶'}
+                                </button>
+                              )}
+                              <select
+                                aria-label={`${cue.rawSfxTextKo} 음향 에셋 선택`}
+                                value={cue.soundAssetId || ''}
+                                onChange={(e) =>
+                                  updateSoundCue(cue.cueId, (c) => ({
+                                    ...c,
+                                    soundAssetId: e.target.value || undefined,
+                                    fallbackMode: e.target.value ? 'sound_effect' : 'text_only',
+                                  }))
+                                }
+                                className="touch-target px-2.5 py-1 border rounded"
+                                style={{ borderColor: 'var(--border-hairline)' }}
+                              >
+                                <option value="">대본 표기 전용 (무음 / Text Only)</option>
+                                {soundLibrary.map((s) => (
+                                  <option key={s.soundAssetId} value={s.soundAssetId}>
+                                    {s.titleKo} ({s.durationMs}ms)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 세그먼트 대사 및 내레이션 편집 */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-bold">
+                    세그먼트 대사 · 내레이션 트랙 ({panelSegments.length}건)
+                  </h4>
+                  <div className="space-y-3">
+                    {panelSegments.map((seg) => {
+                      const koAudioAssetId = seg.audioAssetIdByLocale?.ko;
+                      const koAudioUrl = koAudioAssetId
+                        ? `/api/assets/${episode.episodeId}/${revision.revisionId}/audio/${koAudioAssetId}.wav`
+                        : '';
+                      return (
+                        <div
+                          key={seg.segmentId}
+                          className="p-4 border rounded space-y-3"
+                          style={{
+                            borderColor: 'var(--border-hairline)',
+                            backgroundColor: 'var(--bg-paper)',
+                          }}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold uppercase px-2 py-0.5 rounded border">
+                                {seg.kind}
+                              </span>
+                              <select
+                                aria-label={`${seg.segmentId} 화자 선택`}
+                                value={seg.speakerCharacterId || ''}
+                                onChange={(e) =>
+                                  updateSegment(seg.segmentId, (s) => ({
+                                    ...s,
+                                    speakerCharacterId: e.target.value,
+                                  }))
+                                }
+                                className="touch-target px-2.5 py-1 border rounded font-semibold"
+                                style={{ borderColor: 'var(--border-hairline)' }}
+                              >
+                                {revision.characters.map((c) => (
+                                  <option key={c.characterId} value={c.characterId}>
+                                    {c.canonicalNameKo} ({c.voiceProfile.koVoiceName})
+                                  </option>
+                                ))}
+                              </select>
+                              {koAudioUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => togglePreviewAudio(koAudioUrl)}
+                                  className="touch-target px-2.5 py-1 border rounded font-semibold cursor-pointer"
+                                  style={{
+                                    borderColor: 'var(--border-hairline)',
+                                    backgroundColor:
+                                      playingPreviewUrl === koAudioUrl
+                                        ? 'var(--accent-pine)'
+                                        : 'var(--bg-card)',
+                                    color:
+                                      playingPreviewUrl === koAudioUrl
+                                        ? '#ffffff'
+                                        : 'var(--ink-primary)',
+                                  }}
+                                >
+                                  {playingPreviewUrl === koAudioUrl ? '정지 ■' : '음성 미리듣기 ▶'}
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <label htmlFor={`pause-${seg.segmentId}`}>대사 후 호흡(ms):</label>
+                              <input
+                                id={`pause-${seg.segmentId}`}
+                                type="number"
+                                min={0}
+                                max={3000}
+                                step={20}
+                                value={seg.pauseAfterMs}
+                                onChange={(e) =>
+                                  updateSegment(seg.segmentId, (s) => ({
+                                    ...s,
+                                    pauseAfterMs: Number(e.target.value),
+                                  }))
+                                }
+                                className="w-20 px-2 py-1 border rounded tabular-nums"
+                                style={{ borderColor: 'var(--border-hairline)' }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label
+                                htmlFor={`seg-ko-${seg.segmentId}`}
+                                className="block text-xs font-semibold mb-1"
+                              >
+                                한국어 낭독 대본
+                              </label>
+                              <textarea
+                                id={`seg-ko-${seg.segmentId}`}
+                                rows={2}
+                                value={seg.textKo}
+                                onChange={(e) =>
+                                  updateSegment(seg.segmentId, (s) => ({
+                                    ...s,
+                                    textKo: e.target.value,
+                                  }))
+                                }
+                                className="w-full p-2 border rounded text-sm"
+                                style={{ borderColor: 'var(--border-hairline)' }}
+                              />
+                            </div>
+                            <div>
+                              <label
+                                htmlFor={`seg-en-${seg.segmentId}`}
+                                className="block text-xs font-semibold mb-1"
+                              >
+                                English Script
+                              </label>
+                              <textarea
+                                id={`seg-en-${seg.segmentId}`}
+                                rows={2}
+                                value={seg.textEn}
+                                onChange={(e) =>
+                                  updateSegment(seg.segmentId, (s) => ({
+                                    ...s,
+                                    textEn: e.target.value,
+                                  }))
+                                }
+                                className="w-full p-2 border rounded text-sm"
+                                style={{ borderColor: 'var(--border-hairline)' }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </section>
+          );
+        })()}
 
         {/* 섹션 3: 품질 검증 리포트 및 작업 큐 모니터링 */}
         <section

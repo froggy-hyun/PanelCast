@@ -164,6 +164,20 @@ test.describe('PanelCast End-to-End & Accessibility Verification (T10-T15)', () 
       timeout: 20000,
     });
 
+    // 3. 한글 타이틀/헤딩에 Noto Serif KR 명조체가 사용되지 않고 Pretendard 산세리프가 적용되었는지 검증
+    const h1FontFamily = await page.locator('h1').evaluate((el) => getComputedStyle(el).fontFamily);
+    expect(h1FontFamily).not.toContain('Noto Serif KR');
+    expect(h1FontFamily).toContain('Pretendard');
+
+    // 4. 등장인물 카드별 등장 장면 사진 및 컷별 웹툰 장면 사진 프리뷰 표시 검증
+    const firstCharSceneImg = page.locator('[data-testid^="character-scene-img-"]').first();
+    await expect(firstCharSceneImg).toBeVisible();
+    await expect(firstCharSceneImg).toHaveAttribute('src', /\/api\/assets\/.*\/source\//);
+
+    const activeCutSceneImg = page.getByTestId('studio-active-cut-img');
+    await expect(activeCutSceneImg).toBeVisible();
+    await expect(activeCutSceneImg).toHaveAttribute('src', /\/api\/assets\/.*\/source\//);
+
     const axeStudio = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
       .analyze();
