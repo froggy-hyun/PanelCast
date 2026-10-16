@@ -260,47 +260,53 @@ export async function analyzeEpisodeRevisionTiles(params: {
       ? revision.tiles.slice(0, params.maxTilesToAnalyze)
       : revision.tiles;
 
-  for (const tile of tilesToRun) {
-    if (tile.status === 'completed' && tile.rawResult) {
-      continue;
-    }
+  const pendingTiles = tilesToRun.filter((t) => !(t.status === 'completed' && t.rawResult));
+  const batchSize = 4;
 
-    const { task } = await enqueueIdempotentTask({
-      episodeId: episode.episodeId,
-      revisionId: revision.revisionId,
-      taskType: 'tile_analysis',
-      idempotencyKeyParts: [tile.tileId],
-      payload: { tileId: tile.tileId, tileIndex: tile.tileIndex },
-    });
+  for (let i = 0; i < pendingTiles.length; i += batchSize) {
+    const batch = pendingTiles.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (tile) => {
+        const { task } = await enqueueIdempotentTask({
+          episodeId: episode.episodeId,
+          revisionId: revision.revisionId,
+          taskType: 'tile_analysis',
+          idempotencyKeyParts: [tile.tileId],
+          payload: { tileId: tile.tileId, tileIndex: tile.tileIndex },
+        });
 
-    const leased = await claimTaskLease(task);
-    const activeTask = leased ?? task;
+        const leased = await claimTaskLease(task);
+        const activeTask = leased ?? task;
 
-    try {
-      tile.status = 'analyzing';
-      const tileBuffer = await readBinaryAsset(tile.storageUri);
-      const analyzer = params.tileAnalyzerOverride
-        ? () => params.tileAnalyzerOverride!(tile.tileIndex, revision.tiles.length, tileBuffer)
-        : () =>
-            analyzeTileWithGemini({
-              tileBuffer,
-              mimeType: 'image/jpeg',
-              tileIndex: tile.tileIndex,
-              totalTiles: revision.tiles.length,
-              episodeTitleKo: episode.titleKo,
-            });
+        try {
+          tile.status = 'analyzing';
+          const tileBuffer = await readBinaryAsset(tile.storageUri);
+          const analyzer = params.tileAnalyzerOverride
+            ? () => params.tileAnalyzerOverride!(tile.tileIndex, revision.tiles.length, tileBuffer)
+            : () =>
+                analyzeTileWithGemini({
+                  tileBuffer,
+                  mimeType: 'image/jpeg',
+                  tileIndex: tile.tileIndex,
+                  totalTiles: revision.tiles.length,
+                  episodeTitleKo: episode.titleKo,
+                });
 
-      const { result } = await analyzer();
-      tile.rawResult = result;
-      tile.status = 'completed';
-      await completeTask(activeTask, 'succeeded');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      tile.status = 'failed';
-      await completeTask(activeTask, 'failed', msg);
-      throw err;
-    }
+          const { result } = await analyzer();
+          tile.rawResult = result;
+          tile.status = 'completed';
+          await completeTask(activeTask, 'succeeded');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          tile.status = 'failed';
+          await completeTask(activeTask, 'failed', msg);
+          throw err;
+        }
+      }),
+    );
+    await saveRevision(revision, { localOnly: true });
   }
+
 
   // 분석된 타일 결과 병합 및 중복 제거
   const completedTiles = revision.tiles
@@ -526,8 +532,36 @@ export async function synthesizeRevisionAudio(params: {
   const locales: LocaleCode[] = params.locales ?? ['ko', 'en'];
   const targetSegmentSet = params.onlySegmentIds ? new Set(params.onlySegmentIds) : null;
 
+  // 최신 대사/보이스 기준 inputHash를 먼저 갱신하여 저장 (T07, T17)
+  for (const segment of revision.segments) {
+    if (targetSegmentSet && !targetSegmentSet.has(segment.segmentId)) {
+      continue;
+    }
+    const speaker = revision.characters.find((c) => c.characterId === segment.speakerCharacterId);
+    for (const locale of locales) {
+      segment.inputHashByLocale[locale] = computeSegmentAudioInputHash({
+        segment,
+        character: speaker,
+        locale,
+      });
+    }
+  }
+  await saveRevision(revision, { localOnly: true });
+
   let synthesizedCount = 0;
   let reusedCount = 0;
+
+  interface PendingTtsWorkItem {
+    segment: Segment;
+    locale: LocaleCode;
+    expectedHash: string;
+    voiceName: string;
+    stylePrompt: string;
+    text: string;
+    speakingRate: number;
+  }
+
+  const pendingWorkItems: PendingTtsWorkItem[] = [];
 
   for (const segment of revision.segments) {
     if (targetSegmentSet && !targetSegmentSet.has(segment.segmentId)) {
@@ -537,11 +571,13 @@ export async function synthesizeRevisionAudio(params: {
     const speaker = revision.characters.find((c) => c.characterId === segment.speakerCharacterId);
 
     for (const locale of locales) {
-      const expectedHash = computeSegmentAudioInputHash({
-        segment,
-        character: speaker,
-        locale,
-      });
+      const expectedHash =
+        segment.inputHashByLocale[locale] ||
+        computeSegmentAudioInputHash({
+          segment,
+          character: speaker,
+          locale,
+        });
       segment.inputHashByLocale[locale] = expectedHash;
 
       // 이미 동일한 inputHash를 가진 오디오 에셋이 있는지 확인 (선택적 재생성 T07)
@@ -564,85 +600,114 @@ export async function synthesizeRevisionAudio(params: {
         locale === 'ko'
           ? speaker?.voiceProfile.koVoiceName || 'Kore'
           : speaker?.voiceProfile.enVoiceName || 'Puck';
+      const text = locale === 'ko' ? segment.textKo : segment.textEn;
+      const stylePrompt =
+        locale === 'ko'
+          ? `${speaker?.voiceProfile.stylePromptKo || ''} ${segment.deliveryStyleKo}`.trim()
+          : `${speaker?.voiceProfile.stylePromptEn || ''} ${segment.deliveryStyleEn}`.trim();
 
-      const { task } = await enqueueIdempotentTask({
-        episodeId: episode.episodeId,
-        revisionId: revision.revisionId,
-        taskType: 'segment_tts',
-        idempotencyKeyParts: [segment.segmentId, locale, expectedHash],
-        payload: {
-          segmentId: segment.segmentId,
-          locale,
-          inputHash: expectedHash,
-        },
+      pendingWorkItems.push({
+        segment,
+        locale,
+        expectedHash,
+        voiceName,
+        stylePrompt,
+        text,
+        speakingRate: speaker?.voiceProfile.speakingRate ?? 1.0,
       });
+    }
+  }
 
-      const leased = await claimTaskLease(task);
-      const activeTask = leased ?? task;
+  await saveRevision(revision, { localOnly: true });
 
-      try {
-        const text = locale === 'ko' ? segment.textKo : segment.textEn;
-        const stylePrompt =
-          locale === 'ko'
-            ? `${speaker?.voiceProfile.stylePromptKo || ''} ${segment.deliveryStyleKo}`.trim()
-            : `${speaker?.voiceProfile.stylePromptEn || ''} ${segment.deliveryStyleEn}`.trim();
-
-        const synthResult = params.ttsSynthesizerOverride
-          ? await params.ttsSynthesizerOverride({ segment, locale, voiceName })
-          : await synthesizeSegmentTtsWithGemini({
-              text,
-              stylePrompt,
-              voiceName,
-              locale,
-              speakingRate: speaker?.voiceProfile.speakingRate ?? 1.0,
-            });
-
-        const audioAssetId = `aud_${segment.segmentId}_${locale}_${expectedHash.slice(0, 10)}`;
-        const relativeKey = `episodes/${episode.episodeId}/${revision.revisionId}/audio/${audioAssetId}.wav`;
-        const storageUri = await storeBinaryAsset(relativeKey, synthResult.wavBuffer, 'audio/wav');
-
-        const newAsset: AudioAsset = {
-          audioAssetId,
+  const currentRevisionId = revision.revisionId;
+  const ttsBatchSize = 8;
+  for (let i = 0; i < pendingWorkItems.length; i += ttsBatchSize) {
+    const batch = pendingWorkItems.slice(i, i + ttsBatchSize);
+    const batchOutcomes = await Promise.all(
+      batch.map(async (item) => {
+        const { task } = await enqueueIdempotentTask({
           episodeId: episode.episodeId,
-          revisionId: revision.revisionId,
-          segmentId: segment.segmentId,
-          locale,
-          voiceName,
-          inputHash: expectedHash,
-          mimeType: 'audio/wav',
-          byteSize: synthResult.wavBuffer.byteLength,
-          durationMs: synthResult.durationMs,
-          sampleRateHz: synthResult.sampleRateHz,
-          sha256: synthResult.sha256,
-          storageUri,
-          createdAt: new Date().toISOString(),
-        };
-
-        // inputHash 가드 적용: 오래된 작업 결과가 최신 수정을 덮어쓰지 못하도록 보호 (T17)
-        const guardResult = await recordAudioAssetWithInputHashGuard({
-          episodeId: episode.episodeId,
-          revisionId: revision.revisionId,
-          segmentId: segment.segmentId,
-          locale,
-          expectedInputHash: expectedHash,
-          asset: newAsset,
+          revisionId: currentRevisionId,
+          taskType: 'segment_tts',
+          idempotencyKeyParts: [item.segment.segmentId, item.locale, item.expectedHash],
+          payload: {
+            segmentId: item.segment.segmentId,
+            locale: item.locale,
+            inputHash: item.expectedHash,
+          },
         });
 
-        if (guardResult.applied) {
-          synthesizedCount += 1;
+        const leased = await claimTaskLease(task);
+        const activeTask = leased ?? task;
+
+        try {
+          const synthResult = params.ttsSynthesizerOverride
+            ? await params.ttsSynthesizerOverride({
+                segment: item.segment,
+                locale: item.locale,
+                voiceName: item.voiceName,
+              })
+            : await synthesizeSegmentTtsWithGemini({
+                text: item.text,
+                stylePrompt: item.stylePrompt,
+                voiceName: item.voiceName,
+                locale: item.locale,
+                speakingRate: item.speakingRate,
+              });
+
+          const audioAssetId = `aud_${item.segment.segmentId}_${item.locale}_${item.expectedHash.slice(0, 10)}`;
+          const relativeKey = `episodes/${episode.episodeId}/${currentRevisionId}/audio/${audioAssetId}.wav`;
+          const storageUri = await storeBinaryAsset(relativeKey, synthResult.wavBuffer, 'audio/wav');
+
+          const newAsset: AudioAsset = {
+            audioAssetId,
+            episodeId: episode.episodeId,
+            revisionId: currentRevisionId,
+            segmentId: item.segment.segmentId,
+            locale: item.locale,
+            voiceName: item.voiceName,
+            inputHash: item.expectedHash,
+            mimeType: 'audio/wav',
+            byteSize: synthResult.wavBuffer.byteLength,
+            durationMs: synthResult.durationMs,
+            sampleRateHz: synthResult.sampleRateHz,
+            sha256: synthResult.sha256,
+            storageUri,
+            createdAt: new Date().toISOString(),
+          };
+
+          return { item, activeTask, newAsset };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await completeTask(activeTask, 'failed', msg);
+          throw err;
         }
-        await completeTask(activeTask, 'succeeded');
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await completeTask(activeTask, 'failed', msg);
-        throw err;
+      }),
+    );
+
+    for (const outcome of batchOutcomes) {
+      const guardResult = await recordAudioAssetWithInputHashGuard({
+        episodeId: episode.episodeId,
+        revisionId: revision.revisionId,
+        segmentId: outcome.item.segment.segmentId,
+        locale: outcome.item.locale,
+        expectedInputHash: outcome.item.expectedHash,
+        asset: outcome.newAsset,
+        localOnly: true,
+      });
+
+      if (guardResult.applied) {
+        synthesizedCount += 1;
       }
+      await completeTask(outcome.activeTask, 'succeeded');
     }
   }
 
   const refreshed = await getRevision(params.episodeId, params.revisionId);
   if (refreshed) {
     revision = refreshed;
+    await saveRevision(revision);
   }
   return { revision, synthesizedCount, reusedCount };
 }

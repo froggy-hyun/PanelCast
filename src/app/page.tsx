@@ -247,11 +247,6 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => setLocale(locale === 'ko' ? 'en' : 'ko')}
-              aria-label={
-                locale === 'ko'
-                  ? '언어를 영어로 전환 (Switch language to English)'
-                  : 'Switch language to Korean (한국어로 전환)'
-              }
               className="touch-target px-3.5 py-2 text-sm font-medium border rounded transition-colors cursor-pointer"
               style={{
                 borderColor: 'var(--border-hairline)',

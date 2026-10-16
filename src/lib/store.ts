@@ -45,7 +45,7 @@ function getStorageClient(): Storage | null {
 }
 
 async function writeLocalJson(relPath: string, data: unknown): Promise<void> {
-  const fullPath = path.join(LOCAL_STORAGE_ROOT, relPath);
+  const fullPath = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, relPath);
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
   const tmpPath = `${fullPath}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
@@ -53,9 +53,9 @@ async function writeLocalJson(relPath: string, data: unknown): Promise<void> {
 }
 
 async function readLocalJson<T>(relPath: string): Promise<T | null> {
-  const fullPath = path.join(LOCAL_STORAGE_ROOT, relPath);
+  const fullPath = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, relPath);
   try {
-    const raw = await fs.readFile(fullPath, 'utf8');
+    const raw = await fs.readFile(/*turbopackIgnore: true*/ fullPath, 'utf8');
     return JSON.parse(raw) as T;
   } catch {
     return null;
@@ -69,7 +69,7 @@ export async function storeBinaryAsset(
   mimeType: string,
 ): Promise<string> {
   const cleanKey = relativeKey.replace(/^\/+/, '');
-  const localFile = path.join(LOCAL_STORAGE_ROOT, 'blobs', cleanKey);
+  const localFile = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, 'blobs', cleanKey);
   await fs.mkdir(path.dirname(localFile), { recursive: true });
   await fs.writeFile(localFile, buffer);
 
@@ -106,9 +106,9 @@ export async function readBinaryAsset(storageUri: string): Promise<Buffer> {
   }
   cleanKey = cleanKey.replace(/^\/+/, '');
 
-  const localFile = path.join(LOCAL_STORAGE_ROOT, 'blobs', cleanKey);
+  const localFile = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, 'blobs', cleanKey);
   try {
-    return await fs.readFile(localFile);
+    return await fs.readFile(/*turbopackIgnore: true*/ localFile);
   } catch {
     const gcs = getStorageClient();
     if (gcs) {
@@ -194,9 +194,9 @@ export async function getEpisode(episodeId: string): Promise<Episode | null> {
 export async function listEpisodes(): Promise<Episode[]> {
   const episodesMap = new Map<string, Episode>();
 
-  const episodesDir = path.join(LOCAL_STORAGE_ROOT, 'episodes');
+  const episodesDir = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, 'episodes');
   try {
-    const entries = await fs.readdir(episodesDir, { withFileTypes: true });
+    const entries = await fs.readdir(/*turbopackIgnore: true*/ episodesDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
         const ep = await readLocalJson<Episode>(`episodes/${entry.name}/episode.json`);
@@ -228,11 +228,17 @@ export async function listEpisodes(): Promise<Episode[]> {
   );
 }
 
-export async function saveRevision(revision: Revision): Promise<void> {
+export async function saveRevision(
+  revision: Revision,
+  options?: { localOnly?: boolean },
+): Promise<void> {
   await writeLocalJson(
     `episodes/${revision.episodeId}/revisions/${revision.revisionId}.json`,
     revision,
   );
+  if (options?.localOnly) {
+    return;
+  }
 
   // 대용량 리비전 JSON은 Private GCS에 원본 저장하고 Firestore에는 요약 메타데이터 저장
   await writeCloudJsonObject(
@@ -365,9 +371,9 @@ export async function getEpisodeTasks(
   episodeId: string,
   revisionId: string,
 ): Promise<EpisodeTask[]> {
-  const dir = path.join(LOCAL_STORAGE_ROOT, 'episodes', episodeId, 'tasks', revisionId);
+  const dir = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_ROOT, 'episodes', episodeId, 'tasks', revisionId);
   try {
-    const files = await fs.readdir(dir);
+    const files = await fs.readdir(/*turbopackIgnore: true*/ dir);
     const tasks: EpisodeTask[] = [];
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
@@ -390,6 +396,7 @@ export async function recordAudioAssetWithInputHashGuard(params: {
   locale: LocaleCode;
   expectedInputHash: string;
   asset: AudioAsset;
+  localOnly?: boolean;
 }): Promise<{ applied: boolean; reason?: string }> {
   const revision = await getRevision(params.episodeId, params.revisionId);
   if (!revision) {
@@ -418,9 +425,10 @@ export async function recordAudioAssetWithInputHashGuard(params: {
     revision.audioAssets.push(params.asset);
   }
 
+  targetSegment.inputHashByLocale[params.locale] = params.expectedInputHash;
   targetSegment.audioAssetIdByLocale[params.locale] = params.asset.audioAssetId;
   revision.updatedAt = new Date().toISOString();
-  await saveRevision(revision);
+  await saveRevision(revision, { localOnly: params.localOnly });
 
   return { applied: true };
 }

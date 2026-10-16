@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { GoogleGenAI, Type, Modality } from '@google/genai';
+import sharp from 'sharp';
+import { GoogleGenAI, Type, Modality, ThinkingLevel } from '@google/genai';
 import type { LocaleCode, TileAnalysisResult } from './types';
 import { ensureValidWavBuffer, inspectWavBuffer, wrapPcm16MonoAsWav } from './audio-utils';
 
@@ -74,137 +75,173 @@ export async function analyzeTileWithGemini(params: {
     throw new Error('GEMINI_API_KEY is not configured for tile analysis.');
   }
 
+  let optimizedBuffer = params.tileBuffer;
+  let optimizedMimeType = params.mimeType;
+  try {
+    optimizedBuffer = await sharp(params.tileBuffer)
+      .resize({ width: 512, withoutEnlargement: true })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    optimizedMimeType = 'image/jpeg';
+  } catch {
+    // 합성 테스트 버퍼인 경우 원본 유지
+  }
+
   const prompt = `당신은 시각장애인 독자를 위한 배리어프리 웹툰 오디오북 연출가입니다.
 제공된 이미지는 웹툰 "${params.episodeTitleKo}"의 전체 ${params.totalTiles}개 세로 타일 중 ${params.tileIndex + 1}번째 타일입니다.
 
-이 타일 이미지에 포함된 웹툰 컷(Panel)들을 위에서 아래 순서대로 빠짐없이 분석하여 JSON으로 반환하세요.
+이 타일 이미지에 포함된 웹툰 장면들을 위에서 아래 순서대로 분석하여 핵심적인 2~3개의 주요 장면 컷(panels)으로 응집력 있게 구성해 JSON으로 반환하세요.
 규칙:
 1. 각 컷의 bbox는 타일 내부 상대 좌표(x: 0~1000, y: 0~1000, width: 100~1000, height: 80~1000)로 표기하세요.
-2. visualSummaryKo / visualSummaryEn: 시각장애인 독자가 인물의 표정, 동작, 배경 분위기, 구도를 생생히 그릴 수 있도록 품위 있고 자연스러운 문장으로 서술하세요.
-3. segments: 말풍선 대사(dialogue), 내레이션 박스(narration), 게임/시스템 상태창 팝업(system_popup), 주요 의성어/효과음 텍스트(sfx)를 위에서 아래 읽기 순서대로 추출하세요.
-4. 대사의 화자(speakerKey, speakerNameKo, speakerNameEn)를 문맥과 그림을 통해 추론하세요. 만약 이 컷에서 아직 이름이 밝혀지지 않은 인물이라면 unrevealedLabelKo(예: "검은 로브의 남자", "정체불명의 목소리")와 unrevealedLabelEn을 지정하세요.
-5. 한국어 원문을 충실히 읽고, 자연스러운 영어 번역(textEn, visualSummaryEn)을 함께 작성하세요.`;
+2. visualSummaryKo / visualSummaryEn: 시각장애인 독자가 인물의 표정, 동작, 배경 분위기, 구도를 생생히 그릴 수 있도록 품위 있고 자연스러운 한두 문장으로 서술하세요.
+3. segments: 각 컷 안에서 가장 중요한 말풍선 대사(dialogue), 내레이션(narration), 게임/시스템 상태창 팝업(system_popup), 주요 효과음(sfx)을 위에서 아래 읽기 순서대로 최대 1~3개 이내로 핵심만 추출하세요(동일 화자의 연속 말풍선은 자연스럽게 한 세그먼트로 묶어 호흡을 살리세요).
+4. 대사의 화자(speakerKey, speakerNameKo, speakerNameEn)를 문맥과 그림을 통해 일관되게 지정하세요(예: 주인공 강진혁은 speakerKey="kang_jinhyuk", speakerNameKo="강진혁", speakerNameEn="Kang Jinhyuk"). 만약 해당 컷 시점에서 아직 정체가 밝혀지지 않은 인물이라면 isIdentityRevealedInThisCut=false로 설정하고 unrevealedLabelKo(예: "정체불명의 목소리", "검은 그림자")와 unrevealedLabelEn을 지정하세요.
+5. 한국어 원문을 충실히 읽고, 자연스러운 영어 번역(textEn, visualSummaryEn)을 빈 문자열 없이 함께 작성하세요.`;
 
-  const response = await ai.models.generateContent({
-    model: DEFAULT_VISION_MODEL,
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            inlineData: {
-              mimeType: params.mimeType,
-              data: params.tileBuffer.toString('base64'),
-            },
-          },
-          { text: prompt },
-        ],
-      },
-    ],
-    config: {
-      temperature: 0.2,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        required: ['panels'],
-        properties: {
-          panels: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              required: [
-                'localPanelIndex',
-                'bbox',
-                'visualSummaryKo',
-                'visualSummaryEn',
-                'emotionalToneKo',
-                'emotionalToneEn',
-                'continuityNote',
-                'segments',
-              ],
-              properties: {
-                localPanelIndex: { type: Type.INTEGER },
-                bbox: {
-                  type: Type.OBJECT,
-                  required: ['x', 'y', 'width', 'height'],
-                  properties: {
-                    x: { type: Type.NUMBER },
-                    y: { type: Type.NUMBER },
-                    width: { type: Type.NUMBER },
-                    height: { type: Type.NUMBER },
+  let parsed: TileAnalysisResult | null = null;
+  const maxAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: DEFAULT_VISION_MODEL,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: optimizedMimeType,
+                    data: optimizedBuffer.toString('base64'),
                   },
                 },
-                visualSummaryKo: { type: Type.STRING },
-                visualSummaryEn: { type: Type.STRING },
-                emotionalToneKo: { type: Type.STRING },
-                emotionalToneEn: { type: Type.STRING },
-                continuityNote: { type: Type.STRING },
-                segments: {
+                { text: prompt },
+              ],
+            },
+          ],
+          config: {
+            temperature: 0.2,
+            thinkingConfig: {
+              thinkingLevel: ThinkingLevel.LOW,
+            },
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              required: ['panels'],
+              properties: {
+                panels: {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
                     required: [
-                      'kind',
-                      'speakerKey',
-                      'speakerNameKo',
-                      'speakerNameEn',
-                      'textKo',
-                      'textEn',
-                      'deliveryStyleKo',
-                      'deliveryStyleEn',
+                      'localPanelIndex',
+                      'bbox',
+                      'visualSummaryKo',
+                      'visualSummaryEn',
+                      'emotionalToneKo',
+                      'emotionalToneEn',
+                      'continuityNote',
+                      'segments',
                     ],
                     properties: {
-                      kind: {
-                        type: Type.STRING,
-                        enum: ['dialogue', 'narration', 'sfx', 'system_popup'],
+                      localPanelIndex: { type: Type.INTEGER },
+                      bbox: {
+                        type: Type.OBJECT,
+                        required: ['x', 'y', 'width', 'height'],
+                        properties: {
+                          x: { type: Type.NUMBER },
+                          y: { type: Type.NUMBER },
+                          width: { type: Type.NUMBER },
+                          height: { type: Type.NUMBER },
+                        },
                       },
-                      speakerKey: { type: Type.STRING },
-                      speakerNameKo: { type: Type.STRING },
-                      speakerNameEn: { type: Type.STRING },
-                      isIdentityRevealedInThisCut: { type: Type.BOOLEAN },
-                      unrevealedLabelKo: { type: Type.STRING },
-                      unrevealedLabelEn: { type: Type.STRING },
-                      genderHint: {
-                        type: Type.STRING,
-                        enum: ['male', 'female', 'neutral'],
+                      visualSummaryKo: { type: Type.STRING },
+                      visualSummaryEn: { type: Type.STRING },
+                      emotionalToneKo: { type: Type.STRING },
+                      emotionalToneEn: { type: Type.STRING },
+                      continuityNote: { type: Type.STRING },
+                      segments: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          required: [
+                            'kind',
+                            'speakerKey',
+                            'speakerNameKo',
+                            'speakerNameEn',
+                            'textKo',
+                            'textEn',
+                            'deliveryStyleKo',
+                            'deliveryStyleEn',
+                          ],
+                          properties: {
+                            kind: {
+                              type: Type.STRING,
+                              enum: ['dialogue', 'narration', 'sfx', 'system_popup'],
+                            },
+                            speakerKey: { type: Type.STRING },
+                            speakerNameKo: { type: Type.STRING },
+                            speakerNameEn: { type: Type.STRING },
+                            isIdentityRevealedInThisCut: { type: Type.BOOLEAN },
+                            unrevealedLabelKo: { type: Type.STRING },
+                            unrevealedLabelEn: { type: Type.STRING },
+                            genderHint: {
+                              type: Type.STRING,
+                              enum: ['male', 'female', 'neutral'],
+                            },
+                            ageHint: {
+                              type: Type.STRING,
+                              enum: ['child', 'teen', 'young_adult', 'middle_aged', 'elder'],
+                            },
+                            textKo: { type: Type.STRING },
+                            textEn: { type: Type.STRING },
+                            deliveryStyleKo: { type: Type.STRING },
+                            deliveryStyleEn: { type: Type.STRING },
+                            suggestedSfxCategory: { type: Type.STRING },
+                            sfxConfidence: { type: Type.NUMBER },
+                          },
+                        },
                       },
-                      ageHint: {
-                        type: Type.STRING,
-                        enum: ['child', 'teen', 'young_adult', 'middle_aged', 'elder'],
-                      },
-                      textKo: { type: Type.STRING },
-                      textEn: { type: Type.STRING },
-                      deliveryStyleKo: { type: Type.STRING },
-                      deliveryStyleEn: { type: Type.STRING },
-                      suggestedSfxCategory: { type: Type.STRING },
-                      sfxConfidence: { type: Type.NUMBER },
                     },
                   },
                 },
               },
             },
           },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Vision tile ${params.tileIndex + 1} timeout`)), 25000),
+        ),
+      ]);
+
+      const rawText = response.text?.trim() || '{"panels":[]}';
+      parsed = JSON.parse(rawText) as TileAnalysisResult;
+      break;
+    } catch (err) {
+      if (attempt === maxAttempts) {
+        console.warn(
+          `[Gemini Vision] Tile ${params.tileIndex + 1}/${params.totalTiles} timed out after ${maxAttempts} attempts; using continuity fallback.`,
+        );
+      }
+    }
+  }
+
+  if (!parsed || !Array.isArray(parsed.panels) || parsed.panels.length === 0) {
+    parsed = {
+      panels: [
+        {
+          localPanelIndex: 0,
+          bbox: { x: 0, y: 0, width: 1000, height: 1000 },
+          visualSummaryKo: `${params.tileIndex + 1}번째 구간에서 긴장감 있는 전개와 함께 장면이 이어집니다.`,
+          visualSummaryEn: `The tense scene sequence continues across section ${params.tileIndex + 1}.`,
+          emotionalToneKo: '긴박하고 집중된 호흡',
+          emotionalToneEn: 'Tense and focused pacing',
+          continuityNote: 'Fallback panel for transition strip',
+          segments: [],
         },
-      },
-    },
-  });
-
-  const rawText = response.text?.trim() || '{"panels":[]}';
-  const parsed = JSON.parse(rawText) as TileAnalysisResult;
-
-  if (!Array.isArray(parsed.panels) || parsed.panels.length === 0) {
-    parsed.panels = [
-      {
-        localPanelIndex: 0,
-        bbox: { x: 0, y: 0, width: 1000, height: 1000 },
-        visualSummaryKo: `${params.tileIndex + 1}번째 구간 장면이 이어집니다.`,
-        visualSummaryEn: `Scene sequence continues in section ${params.tileIndex + 1}.`,
-        emotionalToneKo: '차분한 전환',
-        emotionalToneEn: 'Calm transition',
-        continuityNote: 'Fallback panel for silent transition strip',
-        segments: [],
-      },
-    ];
+      ],
+    };
   }
 
   return {
@@ -213,6 +250,9 @@ export async function analyzeTileWithGemini(params: {
     modelId: DEFAULT_VISION_MODEL,
   };
 }
+
+let liveTtsWindowStartMs = Date.now();
+let liveTtsCountInWindow = 0;
 
 // Gemini 다중 보이스 TTS 합성 (단일 화자 호출을 캐릭터별로 반복하여 2인 제한 없이 N인 연기 지원)
 export async function synthesizeSegmentTtsWithGemini(params: {
@@ -231,10 +271,23 @@ export async function synthesizeSegmentTtsWithGemini(params: {
   const ai = getGenAiClient();
   const cleanText = params.text.trim();
 
-  if (!ai || process.env.PANELCAST_SYNTH_FALLBACK_ONLY === 'true') {
+  const now = Date.now();
+  if (now - liveTtsWindowStartMs > 60_000) {
+    liveTtsWindowStartMs = now;
+    liveTtsCountInWindow = 0;
+  }
+
+  const maxLiveTtsPerMinute = Number(process.env.MAX_LIVE_TTS_CALLS_PER_MINUTE || 16);
+  if (
+    !ai ||
+    process.env.PANELCAST_SYNTH_FALLBACK_ONLY === 'true' ||
+    liveTtsCountInWindow >= maxLiveTtsPerMinute
+  ) {
     const fb = generateDeterministicSpeechWav(cleanText, params.voiceName);
     return { ...fb, modelId: 'deterministic-wav-synth' };
   }
+
+  liveTtsCountInWindow += 1;
 
   const modelsToTry = [DEFAULT_TTS_MODEL, FALLBACK_TTS_MODEL];
   const promptText =
@@ -244,20 +297,25 @@ export async function synthesizeSegmentTtsWithGemini(params: {
 
   for (const modelId of modelsToTry) {
     try {
-      const response = await ai.models.generateContent({
-        model: modelId,
-        contents: [{ role: 'user', parts: [{ text: promptText }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: params.voiceName || 'Kore',
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: modelId,
+          contents: [{ role: 'user', parts: [{ text: promptText }] }],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: params.voiceName || 'Kore',
+                },
               },
             },
           },
-        },
-      });
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('TTS request timeout')), 9000),
+        ),
+      ]);
 
       const parts = response.candidates?.[0]?.content?.parts ?? [];
       const audioPart = parts.find((p) => p.inlineData?.data);

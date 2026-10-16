@@ -811,8 +811,8 @@ export default function AccessibleReaderPage() {
                               }}
                               aria-label={
                                 locale === 'ko'
-                                  ? `${seg.speakerDisplayName} 대사부터 재생: ${seg.text}`
-                                  : `Play from ${seg.speakerDisplayName}: ${seg.text}`
+                                  ? `이 대사부터 듣기 (${seg.speakerDisplayName})`
+                                  : `Play Here (${seg.speakerDisplayName})`
                               }
                               className="touch-target shrink-0 px-3.5 py-2 border rounded text-xs font-semibold cursor-pointer"
                               style={{
@@ -850,7 +850,7 @@ export default function AccessibleReaderPage() {
                         aria-current={idx === currentPanelIndex ? 'step' : undefined}
                         aria-label={
                           locale === 'ko'
-                            ? `${idx + 1}번째 컷으로 이동`
+                            ? `${idx + 1} 번째 컷으로 이동`
                             : `Jump to cut ${idx + 1}`
                         }
                         className="touch-target px-3 py-1.5 rounded text-xs font-bold tabular-nums border cursor-pointer"

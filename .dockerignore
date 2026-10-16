@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.local-storage
+playwright-report
+test-results
+tests
+e2e
+coverage
+*.log
+.DS_Store

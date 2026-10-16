@@ -8,6 +8,7 @@ export function getExpectedPublisherToken(): string {
   return (
     process.env.PUBLISHER_STUDIO_TOKEN?.trim() ||
     process.env.STUDIO_ADMIN_TOKEN?.trim() ||
+    process.env.PANELCAST_STUDIO_SECRET?.trim() ||
     'panelcast-publisher-secret-2026'
   );
 }

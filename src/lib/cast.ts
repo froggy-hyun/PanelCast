@@ -128,6 +128,7 @@ export function reconcileEpisodeCast(params: {
   const usedVoiceCount = new Map<string, number>();
   usedVoiceCount.set(narratorChar.voiceProfile.koVoiceName, 1);
 
+  const startedUnrevealed = new Set<string>();
   let dynamicCharCounter = 1;
   let voicePoolExhausted = false;
 
@@ -182,7 +183,9 @@ export function reconcileEpisodeCast(params: {
       let matched = characters.find(
         (c) =>
           normalizeSpeakerKey(c.canonicalNameKo) === normKo ||
-          c.aliases.some((a) => normalizeSpeakerKey(a) === normKey || normalizeSpeakerKey(a) === normKo),
+          c.aliases.some(
+            (a) => normalizeSpeakerKey(a) === normKey || normalizeSpeakerKey(a) === normKo,
+          ),
       );
 
       if (!matched) {
@@ -194,6 +197,16 @@ export function reconcileEpisodeCast(params: {
       }
 
       if (!matched) {
+        while (
+          characters.some(
+            (c) => c.characterId === `char_${String(dynamicCharCounter).padStart(2, '0')}`,
+          ) ||
+          (params.existingCharacters ?? []).some(
+            (c) => c.characterId === `char_${String(dynamicCharCounter).padStart(2, '0')}`,
+          )
+        ) {
+          dynamicCharCounter += 1;
+        }
         const charId = `char_${String(dynamicCharCounter).padStart(2, '0')}`;
         dynamicCharCounter += 1;
 
@@ -225,6 +238,11 @@ export function reconcileEpisodeCast(params: {
         const nameEn = (seg.speakerNameEn || nameKo).trim();
         const unrevealedKo = (seg.unrevealedLabelKo || '정체불명의 목소리').trim();
         const unrevealedEn = (seg.unrevealedLabelEn || 'Mysterious Voice').trim();
+        const startsHidden = seg.isIdentityRevealedInThisCut === false;
+
+        if (startsHidden) {
+          startedUnrevealed.add(charId);
+        }
 
         matched = {
           characterId: charId,
@@ -232,11 +250,10 @@ export function reconcileEpisodeCast(params: {
           revisionId: params.revisionId,
           canonicalNameKo: nameKo,
           canonicalNameEn: nameEn,
-          aliases: Array.from(new Set([rawKey, nameKo, nameEn])),
+          aliases: Array.from(new Set([rawKey, nameKo, nameEn, unrevealedKo, unrevealedEn])),
           unrevealedLabelKo: unrevealedKo,
           unrevealedLabelEn: unrevealedEn,
-          revealedAtPanelId:
-            seg.isIdentityRevealedInThisCut === false ? undefined : undefined,
+          revealedAtPanelId: startsHidden ? 'UNREVEALED' : undefined,
           genderHint: gender,
           ageHint: seg.ageHint ?? 'young_adult',
           voiceProfile: {
@@ -250,11 +267,27 @@ export function reconcileEpisodeCast(params: {
           },
         };
         characters.push(matched);
-      }
-
-      // 특정 컷에서 정체가 처음 밝혀진 것으로 표시된 경우 revealedAtPanelId 기록
-      if (seg.isIdentityRevealedInThisCut && !matched.revealedAtPanelId && pIdx > 0) {
-        matched.revealedAtPanelId = panelId;
+      } else {
+        if (seg.speakerNameKo && !matched.aliases.includes(seg.speakerNameKo)) {
+          matched.aliases.push(seg.speakerNameKo);
+        }
+        if (seg.speakerKey && !matched.aliases.includes(seg.speakerKey)) {
+          matched.aliases.push(seg.speakerKey);
+        }
+        // 미공개 상태로 시작했던 인물이 이후 컷에서 정체가 밝혀진 경우 revealedAtPanelId 기록
+        if (
+          startedUnrevealed.has(matched.characterId) &&
+          matched.revealedAtPanelId === 'UNREVEALED' &&
+          seg.isIdentityRevealedInThisCut === true
+        ) {
+          matched.revealedAtPanelId = panelId;
+          if (seg.speakerNameKo && seg.speakerNameKo !== matched.unrevealedLabelKo) {
+            matched.canonicalNameKo = seg.speakerNameKo.trim();
+          }
+          if (seg.speakerNameEn && seg.speakerNameEn !== matched.unrevealedLabelEn) {
+            matched.canonicalNameEn = seg.speakerNameEn.trim();
+          }
+        }
       }
 
       speakerKeyToCharacterId[seg.speakerKey] = matched.characterId;
@@ -282,6 +315,12 @@ export function resolveSpeakerDisplayNameAtPanel(params: {
   const { character, panelOrderIndex, panels, locale } = params;
   if (!character) {
     return locale === 'ko' ? '해설' : 'Narrator';
+  }
+
+  if (character.revealedAtPanelId === 'UNREVEALED') {
+    return locale === 'ko'
+      ? character.unrevealedLabelKo || '정체불명의 인물'
+      : character.unrevealedLabelEn || 'Unidentified Figure';
   }
 
   if (character.revealedAtPanelId) {

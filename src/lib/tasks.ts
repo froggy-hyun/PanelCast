@@ -98,20 +98,23 @@ export async function claimTaskLease(
   leaseDurationMs = LEASE_DURATION_MS,
 ): Promise<EpisodeTask | null> {
   const nowMs = Date.now();
-  if (task.status === 'succeeded' || task.status === 'cancelled') {
+  const existingTasks = await getEpisodeTasks(task.episodeId, task.revisionId);
+  const current = existingTasks.find((t) => t.taskId === task.taskId) ?? task;
+
+  if (current.status === 'succeeded' || current.status === 'cancelled') {
     return null;
   }
   if (
-    task.status === 'running' &&
-    task.leaseExpiresAt &&
-    new Date(task.leaseExpiresAt).getTime() > nowMs
+    current.status === 'running' &&
+    current.leaseExpiresAt &&
+    new Date(current.leaseExpiresAt).getTime() > nowMs
   ) {
     return null;
   }
   const updated: EpisodeTask = {
-    ...task,
+    ...current,
     status: 'running',
-    attemptCount: task.attemptCount + 1,
+    attemptCount: current.attemptCount + 1,
     leaseExpiresAt: new Date(nowMs + leaseDurationMs).toISOString(),
     updatedAt: new Date(nowMs).toISOString(),
   };

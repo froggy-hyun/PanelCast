@@ -67,8 +67,10 @@ export function buildAnalysisTilesFromStrips(
   const totalHeight = sorted[sorted.length - 1].globalYEnd;
   const maxWidth = sorted.reduce((acc, s) => Math.max(acc, s.width), 690);
 
-  const tileHeightPx = options?.tileHeightPx ?? DEFAULT_TILE_HEIGHT_PX;
-  const overlapPx = options?.overlapPx ?? DEFAULT_TILE_OVERLAP_PX;
+  const defaultHeight = totalHeight > 24000 ? 6400 : DEFAULT_TILE_HEIGHT_PX;
+  const defaultOverlap = totalHeight > 24000 ? 400 : DEFAULT_TILE_OVERLAP_PX;
+  const tileHeightPx = options?.tileHeightPx ?? defaultHeight;
+  const overlapPx = options?.overlapPx ?? defaultOverlap;
   const stridePx = Math.max(400, tileHeightPx - overlapPx);
 
   const tiles: AnalysisTile[] = [];

@@ -17,6 +17,7 @@ const cspHeader = [
 const nextConfig: NextConfig = {
   output: 'standalone',
   poweredByHeader: false,
+  allowedDevOrigins: ['127.0.0.1', 'localhost'],
   serverExternalPackages: ['sharp', '@google-cloud/firestore', '@google-cloud/storage', '@google-cloud/tasks', 'firebase-admin'],
   async headers() {
     return [
